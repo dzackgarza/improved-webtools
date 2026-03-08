@@ -1,0 +1,13 @@
+[project]
+name = "improved-webtools-mcp"
+version = "1.0.0"
+description = "FastMCP wrapper for improved-webtools"
+requires-python = ">=3.11"
+dependencies = ["fastmcp>=2.0.0"]
+
+[dependency-groups]
+dev = ["pytest-asyncio>=0.24.0", "inline-snapshot>=0.10.0"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

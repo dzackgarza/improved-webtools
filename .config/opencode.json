@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "github-copilot/gpt-4.1",
+  "plugin": [
+    "file:///home/dzack/opencode-plugins/improved-webtools/src/index.ts"
+  ],
+  "permission": {
+    "webfetch": "allow",
+    "websearch": "allow"
+  }
+}
