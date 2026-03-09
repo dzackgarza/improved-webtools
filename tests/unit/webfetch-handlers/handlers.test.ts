@@ -202,6 +202,33 @@ describe("webfetch handler modules", () => {
     expect(output.content).toContain("We're no strangers to");
   });
 
+  it("passes an optional yt-dlp cookies file to youtube commands", async () => {
+    const originalCookiesFile = process.env.YTDLP_COOKIES_FILE;
+    process.env.YTDLP_COOKIES_FILE = "/tmp/test-youtube-cookies.txt";
+    const calls: string[][] = [];
+
+    try {
+      await fetchYoutubeTranscriptMarkdown({
+        url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+        runCommand: async (args) => {
+          calls.push(args);
+          return { stdoutText: "", stderrText: "video unavailable", exitCode: 1 };
+        },
+      });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain("--cookies");
+      expect(calls[0]).toContain("/tmp/test-youtube-cookies.txt");
+      expect(calls[0]?.indexOf("--cookies")).toBeGreaterThan(calls[0]?.indexOf("yt-dlp") ?? -1);
+    } finally {
+      if (originalCookiesFile === undefined) {
+        delete process.env.YTDLP_COOKIES_FILE;
+      } else {
+        process.env.YTDLP_COOKIES_FILE = originalCookiesFile;
+      }
+    }
+  });
+
   it("falls back to whisper transcript path using real whisper fixture text", async () => {
     const calls: string[][] = [];
     const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");

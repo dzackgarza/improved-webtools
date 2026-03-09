@@ -16,3 +16,6 @@ mcp-test:
   cd mcp-server && uv run pytest
 
 check: typecheck test mcp-test
+
+youtube-live-verify:
+  bun scripts/verify-youtube-live.ts

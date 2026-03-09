@@ -69,6 +69,7 @@ Special handling:
 Environment:
 
 - `WEBFETCH_ARXIV_LIBRARY_DIR` overrides the default artifact root at `~/.cache/opencode-arxiv-library`
+- `YTDLP_COOKIES_FILE` optionally points at a Netscape-format cookie jar for `yt-dlp` when YouTube bot-checks gate spoken/informational videos
 
 ### `websearch`
 
@@ -91,4 +92,5 @@ Use when you need to search the web. Optional categories for narrowing only: new
 just typecheck
 just test
 just mcp-test
+YTDLP_COOKIES_FILE=/abs/path/to/youtube.cookies just youtube-live-verify
 ```
