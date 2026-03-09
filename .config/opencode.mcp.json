@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "improved-webtools": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "--from",
+        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-webtools/mcp-server",
+        "improved-webtools-mcp"
+      ]
+    }
+  }
+}

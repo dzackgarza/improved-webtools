@@ -5,6 +5,9 @@ description = "FastMCP wrapper for improved-webtools"
 requires-python = ">=3.11"
 dependencies = ["fastmcp>=2.0.0"]
 
+[project.scripts]
+improved-webtools-mcp = "server:main"
+
 [dependency-groups]
 dev = ["pytest-asyncio>=0.24.0", "inline-snapshot>=0.10.0"]
 

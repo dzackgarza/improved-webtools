@@ -14,5 +14,6 @@
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.20",
     "js-tiktoken": "^1.0.21"
-  }
+  },
+  "module": "./src/index.ts"
 }

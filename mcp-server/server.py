@@ -120,5 +120,9 @@ async def websearch(
         return f"Error: {str(e)}"
 
 
-if __name__ == "__main__":
+def main() -> None:
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()
