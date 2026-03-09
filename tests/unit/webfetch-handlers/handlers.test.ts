@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
+  extractArxivIdFromUrl,
+  fetchArxivLibraryContent,
   buildGitHubCommandPlan,
   fetchGitHubContent,
   fetchRedditPostMarkdown,
@@ -399,6 +401,189 @@ describe("webfetch handler modules", () => {
         runCommand: async () => ({ stdoutText: "", stderrText: "", exitCode: 0 }),
       }),
     ).rejects.toThrow(Error);
+  });
+
+  it("normalizes arxiv IDs across supported URL shapes", () => {
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/abs/2401.12345v3"))).toBe("2401.12345");
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/pdf/2401.12345.pdf"))).toBe("2401.12345");
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/src/hep-th/9901001v2"))).toBe("hep-th/9901001");
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/abs/math.GT/0309136v1"))).toBe("math.GT/0309136");
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/html/2401.12345v1"))).toBe("2401.12345");
+    expect(extractArxivIdFromUrl(new URL("https://example.com/abs/2401.12345"))).toBeUndefined();
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/abs/%2e%2e%2f%2e%2e%2ftmp%2fpwn"))).toBeUndefined();
+  });
+
+  it("builds the arxiv local library, records last access, and refreshes on demand", async () => {
+    const libraryDir = (await Bun.$`mktemp -d /tmp/improved-webtools-arxiv-XXXXXX`.text()).trim();
+    const apiXml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2401.12345v3</id>
+    <title>Distributionally Robust Receive Combining</title>
+    <updated>2025-06-17T20:37:32Z</updated>
+    <published>2024-01-22T19:00:00Z</published>
+    <author><name>Alice Example</name></author>
+    <author><name>Bob Example</name></author>
+    <summary>This article investigates signal estimation in wireless transmission.</summary>
+    <category term="eess.SP"/>
+    <arxiv:doi>10.1234/example</arxiv:doi>
+    <arxiv:journal_ref>Example Journal 2025</arxiv:journal_ref>
+  </entry>
+</feed>`;
+    const fetchCalls: string[] = [];
+
+    const fetchImpl = (async (input: string | Request | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      fetchCalls.push(url);
+      if (url.includes("/api/query")) {
+        return new Response(apiXml, { status: 200 });
+      }
+      if (url.includes("/pdf/2401.12345.pdf")) {
+        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
+      }
+      if (url.includes("/e-print/2401.12345")) {
+        return new Response("\\documentclass{article}\n\\begin{document}\nHello arXiv.\n\\end{document}\n", {
+          status: 200,
+        });
+      }
+      return new Response("unexpected", { status: 404, statusText: "Not Found" });
+    }) as unknown as typeof fetch;
+
+    const runCommand = async (args: string[]) => {
+      if (args[0] === "tar") {
+        return { stdoutText: "", stderrText: "not a gzip archive", exitCode: 1 };
+      }
+      if (args[0] === "pandoc") {
+        const outputIndex = args.indexOf("--output");
+        const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
+        if (outputPath) {
+          const content = args.includes("--to=gfm")
+            ? "# Distributionally Robust Receive Combining\n\nHello arXiv.\n"
+            : "<html><body><h1>Distributionally Robust Receive Combining</h1></body></html>\n";
+          writeFileSync(outputPath, content);
+        }
+        return { stdoutText: "", stderrText: "", exitCode: 0 };
+      }
+      return { stdoutText: "", stderrText: "unexpected command", exitCode: 1 };
+    };
+
+    try {
+      const first = await fetchArxivLibraryContent({
+        url: new URL("https://arxiv.org/abs/2401.12345v3"),
+        libraryDir,
+        fetchImpl,
+        runCommand,
+        now: new Date("2026-03-09T00:00:00Z"),
+      });
+
+      expect(first.routeName).toBe("arxiv/library");
+      expect(first.content).toContain("Local arXiv library status: built");
+      expect(first.content).toContain("Last accessed: 2026-03-09T00:00:00.000Z");
+      expect(first.content).toContain(`Source archive file: ${join(libraryDir, "2401.12345", "2401.12345_source.tar.gz")}`);
+      expect(first.content).toContain(`Markdown file: ${join(libraryDir, "2401.12345", "2401.12345.md")}`);
+      expect(first.content).toContain(`HTML file: ${join(libraryDir, "2401.12345", "2401.12345.html")}`);
+
+      const paperDir = join(libraryDir, "2401.12345");
+      const metadataPath = join(paperDir, "metadata.yaml");
+      const summaryPath = join(paperDir, "SUMMARY.md");
+      const markdownPath = join(paperDir, "2401.12345.md");
+      const htmlPath = join(paperDir, "2401.12345.html");
+
+      expect(readFileSync(metadataPath, "utf8")).toContain('last_accessed_at: "2026-03-09T00:00:00.000Z"');
+      expect(readFileSync(metadataPath, "utf8")).toContain("processing_notes:");
+      expect(readFileSync(metadataPath, "utf8")).toContain("Source payload was not a tar archive; wrote raw source bytes to a .tex fallback");
+      expect(readFileSync(summaryPath, "utf8")).toContain("Distributionally Robust Receive Combining");
+      expect(readFileSync(markdownPath, "utf8")).toContain("# Distributionally Robust Receive Combining");
+      expect(readFileSync(htmlPath, "utf8")).toContain("<html>");
+
+      const fetchCountAfterBuild = fetchCalls.length;
+      const second = await fetchArxivLibraryContent({
+        url: new URL("https://arxiv.org/pdf/2401.12345.pdf"),
+        libraryDir,
+        fetchImpl,
+        runCommand,
+        now: new Date("2026-03-10T00:00:00Z"),
+      });
+
+      expect(second.content).toContain("Local arXiv library status: hit");
+      expect(second.content).toContain("Last accessed: 2026-03-10T00:00:00.000Z");
+      expect(second.content).toContain("Authors: Alice Example, Bob Example");
+      expect(second.content).toContain("Published: 2024-01-22T19:00:00Z");
+      expect(fetchCalls.length).toBe(fetchCountAfterBuild);
+      expect(readFileSync(metadataPath, "utf8")).toContain('last_accessed_at: "2026-03-10T00:00:00.000Z"');
+
+      const staleFilePath = join(paperDir, "source", "stale.tex");
+      writeFileSync(staleFilePath, "stale artifact");
+      expect(existsSync(staleFilePath)).toBe(true);
+
+      const refreshed = await fetchArxivLibraryContent({
+        url: new URL("https://arxiv.org/src/2401.12345"),
+        libraryDir,
+        fetchImpl,
+        runCommand,
+        now: new Date("2026-03-11T00:00:00Z"),
+        cacheMode: "refresh",
+      });
+
+      expect(refreshed.content).toContain("Local arXiv library status: refreshed");
+      expect(fetchCalls.length).toBeGreaterThan(fetchCountAfterBuild);
+      expect(readFileSync(metadataPath, "utf8")).toContain('cache_status: "refreshed"');
+      expect(readFileSync(metadataPath, "utf8")).toContain('last_accessed_at: "2026-03-11T00:00:00.000Z"');
+      expect(existsSync(staleFilePath)).toBe(false);
+    } finally {
+      rmSync(libraryDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unsafe tar archive entries before extraction", async () => {
+    const libraryDir = (await Bun.$`mktemp -d /tmp/improved-webtools-arxiv-unsafe-XXXXXX`.text()).trim();
+    const apiXml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2401.12345v3</id>
+    <title>Unsafe Archive Fixture</title>
+    <updated>2025-06-17T20:37:32Z</updated>
+    <published>2024-01-22T19:00:00Z</published>
+    <author><name>Alice Example</name></author>
+    <summary>Unsafe archive fixture.</summary>
+    <category term="eess.SP"/>
+  </entry>
+</feed>`;
+
+    const fetchImpl = (async (input: string | Request | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/query")) {
+        return new Response(apiXml, { status: 200 });
+      }
+      if (url.includes("/pdf/2401.12345.pdf")) {
+        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
+      }
+      if (url.includes("/e-print/2401.12345")) {
+        return new Response(new Uint8Array([0x1f, 0x8b]), { status: 200 });
+      }
+      return new Response("unexpected", { status: 404, statusText: "Not Found" });
+    }) as unknown as typeof fetch;
+
+    const runCommand = async (args: string[]) => {
+      if (args[0] === "tar" && args[1] === "-tzf") {
+        return { stdoutText: "../../tmp/pwn\n", stderrText: "", exitCode: 0 };
+      }
+      return { stdoutText: "", stderrText: "", exitCode: 0 };
+    };
+
+    try {
+      await expect(
+        fetchArxivLibraryContent({
+          url: new URL("https://arxiv.org/abs/2401.12345"),
+          libraryDir,
+          fetchImpl,
+          runCommand,
+          now: new Date("2026-03-09T00:00:00Z"),
+        }),
+      ).rejects.toThrow("unsafe arXiv source archive entry");
+    } finally {
+      rmSync(libraryDir, { recursive: true, force: true });
+    }
   });
 
 });
