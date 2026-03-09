@@ -635,6 +635,82 @@ describe("searxng-search plugin", () => {
     }
   });
 
+  it("refreshes plugin-wide webfetch cache entries when cacheMode is refresh", async () => {
+    const tempRoot = await mkdtemp("/tmp/opencode-webfetch-cache-refresh-test-");
+    const cacheDir = join(tempRoot, "cache");
+    const pages = ["first page content", "refreshed page content"];
+    let pageIndex = 0;
+    const calls: string[][] = [];
+
+    try {
+      (Bun as any).spawn = (args: string[]) => {
+        calls.push(args);
+        const command = args[2] ?? "";
+        if (command.includes("curl -sSIL")) {
+          return {
+            stdout: streamFromText("HTTP/2 200\r\ncontent-type: text/html\r\ncontent-length: 18\r\n"),
+            stderr: streamFromText(""),
+            exited: Promise.resolve(0),
+          };
+        }
+        const page = pages[Math.min(pageIndex, pages.length - 1)]!;
+        pageIndex += 1;
+        return {
+          stdout: streamFromText(page),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      };
+
+      const { webfetch } = await loadPlugin("http://localhost/searxng", {
+        webfetchCacheEnabled: "1",
+        webfetchCacheDir: cacheDir,
+        webfetchCacheTtlDays: "90",
+      });
+      const context = buildContext();
+
+      const first = await webfetch.execute(
+        {
+          url: "https://example.com/cache-refresh",
+        },
+        context as any,
+      );
+      expect(calls).toHaveLength(2);
+      const cached = await webfetch.execute(
+        {
+          url: "https://example.com/cache-refresh",
+        },
+        context as any,
+      );
+      expect(calls).toHaveLength(2);
+      const refreshed = await webfetch.execute(
+        {
+          url: "https://example.com/cache-refresh",
+          cacheMode: "refresh",
+        },
+        context as any,
+      );
+      expect(calls).toHaveLength(4);
+      const afterRefresh = await webfetch.execute(
+        {
+          url: "https://example.com/cache-refresh",
+        },
+        context as any,
+      );
+      expect(calls).toHaveLength(4);
+      expect(first).toContain("Route: default");
+      expect(first).toContain("first page content");
+      expect(cached).toContain("Route: default/cache");
+      expect(cached).toContain("first page content");
+      expect(refreshed).toContain("Route: default");
+      expect(refreshed).toContain("refreshed page content");
+      expect(afterRefresh).toContain("Route: default/cache");
+      expect(afterRefresh).toContain("refreshed page content");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("routes github URLs through gh handler commands", async () => {
     const calls: string[][] = [];
     const issueFixture = fixtureText("github/issue-14460.json");
