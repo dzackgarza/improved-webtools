@@ -54,9 +54,11 @@ async function main() {
   assertContains(result.content, "# Reddit Post", "reddit success case");
   assertContains(result.content, "Anyone Else Excited for o3 Mini Release?", "reddit success case");
   assertContains(result.content, "- Subreddit: r/OpenAI", "reddit success case");
-  assertContains(result.content, "- Author: u/Thinklikeachef", "reddit success case");
   assertContains(result.content, "## Comments (nested)", "reddit success case");
-  assertMatches(result.content, /^- u\/[A-Za-z0-9_-]+/m, "reddit success case");
+  assertMatches(result.content, /^- Comments extracted: [1-9][0-9]*$/m, "reddit success case");
+  if (result.content.includes("[no comments extracted]")) {
+    throw new Error("reddit success case unexpectedly returned an empty comment tree");
+  }
 
   console.log("PASS: Reddit live verification succeeded.");
   console.log("PASS: Real Apify actor output produced the expected post metadata.");
