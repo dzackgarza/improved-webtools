@@ -1,15 +1,19 @@
-# improved-webtools
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
 
-OpenCode plugin that provides `webfetch` and `websearch`, plus a FastMCP wrapper for the same search/fetch logic.
+# Improved Web Tools
 
-## Install
+OpenCode plugin that provides `webfetch` and `websearch` tools, including a FastMCP wrapper for the same logic.
+
+## Installation
+
+Install dependencies and set up the project:
 
 ```bash
 cd /home/dzack/opencode-plugins/improved-webtools
 just install
 ```
 
-OpenCode plugin registration via `file:`:
+Register the plugin in OpenCode via `file:`:
 
 ```json
 {
@@ -19,9 +23,11 @@ OpenCode plugin registration via `file:`:
 }
 ```
 
-Sample local config: [`improved-webtools/.config/opencode.json`](/home/dzack/opencode-plugins/improved-webtools/.config/opencode.json)
+Sample local configuration: [`improved-webtools/.config/opencode.json`](./.config/opencode.json)
 
-MCP install:
+### MCP Installation
+
+Add the MCP server to your configuration:
 
 ```json
 {
@@ -39,53 +45,41 @@ MCP install:
 }
 ```
 
-## Tool Names
+## Tools
 
 ### `webfetch`
 
-Description shown to the agent:
+Reads a webpage URL as plain text content.
 
-```text
-Use when you need to read a webpage URL as plain text content.
-```
+**Parameters:**
 
-Schema:
+- `url`: (string) The URL to fetch.
+- `prompt?`: (string) Optional prompt for extraction.
+- `cacheMode?`: `"default" | "refresh"` - Use `"refresh"` to bypass cached results and force a fresh fetch.
 
-```text
-url: string
-prompt?: string
-cacheMode?: "default" | "refresh"
-cache_mode?: "default" | "refresh"
-```
+**Special Handling:**
 
-Special handling:
+- **ArXiv**: Routes `arxiv.org` URLs through a local artifact library. The library stores PDFs, source archives, BibTeX, and markdown conversions.
+- **Cache**: `cacheMode: "refresh"` rebuilds local artifact directories for ArXiv URLs.
 
-- `arxiv.org/abs/...`, `arxiv.org/pdf/...`, `arxiv.org/src/...`, and `arxiv.org/html/...` are routed through a local artifact library instead of plain `w3m`
-- the library stores `pdf`, source archive, extracted source, BibTeX, `metadata.yaml`, `SUMMARY.md`, and best-effort markdown/html conversions
-- `metadata.yaml` records both `processed_at` and `last_accessed_at`
-- `cacheMode: "refresh"` is the stale-result lever: it bypasses cached reads and forces a fresh fetch when you suspect the current result is outdated
-- for arXiv URLs, that same mode also rebuilds the local artifact directory from scratch
+**Environment Variables:**
 
-Environment:
-
-- `WEBFETCH_ARXIV_LIBRARY_DIR` overrides the default artifact root at `~/.cache/opencode-arxiv-library`
+- `WEBFETCH_ARXIV_LIBRARY_DIR`: Overrides the default artifact root (`~/.cache/opencode-arxiv-library`).
 
 ### `websearch`
 
-Description shown to the agent:
-
-```text
-Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate.
-```
+Searches the web with optional category narrowing (e.g., news, npm, pypi, gh, science). Supports pagination via `offset` and `numResults`.
 
 ## Dependencies
 
-- Runtime: Bun, `@opencode-ai/plugin`, `js-tiktoken`
-- External commands: `gh`, `w3m`, `curl`
-- Handler-specific tools: `yt-dlp`, `uvx`, Apify CLI / actor access for Reddit
-- MCP wrapper: Python 3.11+, `uv`, `fastmcp`
+- **Runtime**: Bun, `@opencode-ai/plugin`, `js-tiktoken`
+- **Commands**: `gh`, `w3m`, `curl`
+- **Handlers**: `yt-dlp`, `uvx`, Apify CLI (for Reddit)
+- **MCP**: Python 3.11+, `uv`, `fastmcp`
 
-## Checks
+## Development
+
+Run checks and tests:
 
 ```bash
 just typecheck
