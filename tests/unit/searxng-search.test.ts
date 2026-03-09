@@ -336,6 +336,73 @@ describe("searxng-search plugin", () => {
     expect(output).toContain("Token count:");
   });
 
+  it("downloads PDFs to a temp file instead of piping raw bytes through w3m", async () => {
+    const calls: string[][] = [];
+
+    (Bun as any).spawn = (args: string[]) => {
+      calls.push(args);
+      const script = args[2] ?? "";
+
+      if (script.includes("curl -sSIL")) {
+        return {
+          stdout: streamFromText(
+            [
+              "HTTP/2 200",
+              "content-type: application/pdf",
+              "content-length: 13264",
+              "",
+            ].join("\n"),
+          ),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
+
+      if (script.includes('curl -sSL --compressed --max-time 30 -o "$outfile"')) {
+        return {
+          stdout: streamFromText("/tmp/webfetch-pdf-abcd12/document.pdf\n"),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: streamFromText(""),
+        stderr: streamFromText(`unexpected command: ${script}`),
+        exited: Promise.resolve(1),
+      };
+    };
+
+    const { webfetch } = await loadPlugin("http://localhost/searxng", {
+      webfetchCacheEnabled: "0",
+    });
+    const context = buildContext();
+
+    const output = await webfetch.execute(
+      {
+        url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      },
+      context as any,
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[2]).toContain("curl -sSIL");
+    expect(calls[1]?.[2]).toContain('curl -sSL --compressed --max-time 30 -o "$outfile"');
+    expect(calls.some((args) => (args[2] ?? "").includes("w3m -dump"))).toBe(false);
+    expect(output).toContain(
+      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
+    );
+    expect(output).toContain("Route: default/binary-pdf");
+    expect(output).toContain(
+      "Binary content detected: application/pdf.",
+    );
+    expect(output).toContain("Saved PDF: /tmp/webfetch-pdf-abcd12/document.pdf");
+    expect(output).toContain("Content-Length: 13264 bytes");
+    expect(output).toContain(
+      "PDF responses are downloaded directly to a temporary directory instead of being piped through w3m.",
+    );
+  });
+
   it("routes reddit posts through apify and renders nested markdown comments", async () => {
     const apifyDataset = fixtureJson<Array<Record<string, unknown>>>(
       "reddit/apify-search-openai.json",
@@ -707,9 +774,9 @@ describe("searxng-search plugin", () => {
   it("explains arxiv 429 as capacity-related", async () => {
     (Bun as any).spawn = (args: string[]) => {
       const script = args[2] ?? "";
-      if (script.includes("%{http_code}")) {
+      if (script.includes("curl -sSIL")) {
         return {
-          stdout: streamFromText("429"),
+          stdout: streamFromText("HTTP/2 429\ncontent-type: text/plain\n\n"),
           stderr: streamFromText(""),
           exited: Promise.resolve(0),
         };
@@ -754,9 +821,9 @@ describe("searxng-search plugin", () => {
   it("explains arxiv 503 as excessive-use signal", async () => {
     (Bun as any).spawn = (args: string[]) => {
       const script = args[2] ?? "";
-      if (script.includes("%{http_code}")) {
+      if (script.includes("curl -sSIL")) {
         return {
-          stdout: streamFromText("503"),
+          stdout: streamFromText("HTTP/2 503\ncontent-type: text/plain\n\n"),
           stderr: streamFromText(""),
           exited: Promise.resolve(0),
         };

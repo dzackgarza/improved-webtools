@@ -139,6 +139,12 @@ type WebFetchCachePayload = {
   cachedAt: string;
 };
 
+type HttpMetadata = {
+  statusCode?: number;
+  contentType?: string;
+  contentLength?: number;
+};
+
 function webFetchCachePath(url: string): string {
   const digest = createHash("sha256").update(url).digest("hex");
   return `${WEBFETCH_CACHE_DIR}/${digest}.json`;
@@ -178,6 +184,7 @@ async function readWebFetchCache(url: string): Promise<WebFetchHandlerResult | u
 
 async function writeWebFetchCache(url: string, result: WebFetchHandlerResult): Promise<void> {
   if (!WEBFETCH_CACHE_ENABLED) return;
+  if (result.routeName.includes("/binary")) return;
   if (!result.content.trim()) return;
   await Bun.$`mkdir -p ${WEBFETCH_CACHE_DIR}`.quiet();
   const payload: WebFetchCachePayload = {
@@ -231,17 +238,62 @@ async function fetchWebContentWithW3M(url: URL): Promise<CommandExecutionResult>
   ]);
 }
 
-async function fetchHttpStatusCode(url: URL): Promise<number | undefined> {
+async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
   const result = await runCommand([
     "sh",
     "-lc",
-    `curl -sSIL --compressed --max-time 30 -o /dev/null -w '%{http_code}' ${JSON.stringify(url.toString())}`,
+    `curl -sSIL --compressed --max-time 30 ${JSON.stringify(url.toString())}`,
   ]);
-  if (result.exitCode !== 0) return undefined;
-  const code = Number.parseInt(result.stdoutText.trim(), 10);
-  if (!Number.isFinite(code)) return undefined;
-  if (code < 100 || code > 599) return undefined;
-  return code;
+  if (result.exitCode !== 0) return {};
+
+  const headerBlocks = result.stdoutText
+    .split(/\r?\n\r?\n/g)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  const finalHeaders = headerBlocks.at(-1) ?? result.stdoutText;
+  const lines = finalHeaders.split(/\r?\n/g);
+  const rawTrimmed = result.stdoutText.trim();
+
+  const statusLine = lines.find((line) => /^HTTP\/\d+(?:\.\d+)?\s+\d{3}\b/i.test(line));
+  const statusCode = statusLine
+    ? Number.parseInt(statusLine.replace(/^HTTP\/\d+(?:\.\d+)?\s+/, "").slice(0, 3), 10)
+    : /^\d{3}$/.test(rawTrimmed)
+      ? Number.parseInt(rawTrimmed, 10)
+      : undefined;
+  const contentTypeHeader = lines.find((line) => /^content-type:/i.test(line));
+  const contentLengthHeader = lines.find((line) => /^content-length:/i.test(line));
+  const contentType = contentTypeHeader?.replace(/^content-type:\s*/i, "").trim();
+  const contentLength = Number.parseInt(
+    contentLengthHeader?.replace(/^content-length:\s*/i, "").trim() ?? "",
+    10,
+  );
+
+  return {
+    statusCode:
+      Number.isFinite(statusCode) && (statusCode ?? 0) >= 100 && (statusCode ?? 0) <= 599
+        ? statusCode
+        : undefined,
+    contentType: contentType && contentType.length > 0 ? contentType : undefined,
+    contentLength: Number.isFinite(contentLength) && contentLength >= 0 ? contentLength : undefined,
+  };
+}
+
+function isPdfContentType(contentType?: string): boolean {
+  return contentType?.toLowerCase().includes("application/pdf") ?? false;
+}
+
+async function downloadPdfToTemp(url: URL): Promise<CommandExecutionResult> {
+  return runCommand([
+    "sh",
+    "-lc",
+    [
+      "set -eu",
+      "tmpdir=$(mktemp -d /tmp/webfetch-pdf-XXXXXX)",
+      'outfile="$tmpdir/document.pdf"',
+      `curl -sSL --compressed --max-time 30 -o "$outfile" ${JSON.stringify(url.toString())}`,
+      'printf "%s\\n" "$outfile"',
+    ].join("; "),
+  ]);
 }
 
 function formatArxivServiceMessage(input: {
@@ -565,6 +617,245 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     },
   ];
 
+  const websearchTool = tool({
+    description:
+      "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate.",
+    args: {
+      query: tool.schema.string(),
+      category: tool.schema.string().optional(),
+      numResults: tool.schema.number().optional(),
+      num_results: tool.schema.number().optional(),
+      offset: tool.schema.number().optional(),
+      recency: tool.schema.number().optional(),
+      domains: tool.schema.array(tool.schema.string()).optional(),
+      search_query: tool.schema
+        .array(
+          tool.schema.object({
+            q: tool.schema.string(),
+            category: tool.schema.string().optional(),
+            num_results: tool.schema.number().optional(),
+            numResults: tool.schema.number().optional(),
+            offset: tool.schema.number().optional(),
+            recency: tool.schema.number().optional(),
+            domains: tool.schema.array(tool.schema.string()).optional(),
+          }),
+        )
+        .min(1)
+        .optional(),
+    },
+    async execute(args, context) {
+      const baseUrl = SEARXNG_INSTANCE_URL;
+      if (!baseUrl) {
+        return [
+          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
+          ISSUE_REPORTING_HINT,
+          "Web search is unavailable in this environment. Ask the user to check plugin configuration.",
+        ].join("\n");
+      }
+
+      const rawQueries = args.search_query as SearchQueryInput[] | undefined;
+      const queries: SearchQueryInput[] =
+        rawQueries && rawQueries.length > 0
+          ? rawQueries
+          : [
+              {
+                q: args.query,
+                category: args.category,
+                num_results: args.num_results,
+                numResults: args.numResults,
+                offset: args.offset,
+                recency: args.recency,
+                domains: args.domains,
+              },
+            ];
+      const firstQuery = queries[0]?.q?.trim() ?? "";
+      if (!firstQuery) {
+        return [
+          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
+          ISSUE_REPORTING_HINT,
+          "Invalid search_query: first query is empty.",
+        ].join("\n");
+      }
+
+      await context.ask({
+        permission: "websearch",
+        patterns: queries.map((item) => item.q.trim()).filter(Boolean),
+        always: ["*"],
+        metadata: {
+          query: firstQuery,
+          queryCount: queries.length,
+        },
+      });
+
+      const firstLimit = parseLimit(
+        queries[0]?.numResults ?? queries[0]?.num_results ?? args.numResults ?? args.num_results,
+      );
+
+      context.metadata({
+        title: `Web search: ${firstQuery.slice(0, 72)}`,
+        metadata: {
+          numResults: firstLimit,
+          queryCount: queries.length,
+        },
+      });
+
+      const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+      const signal = AbortSignal.any([context.abort, timeoutSignal]);
+
+      const blocks: string[] = [];
+
+      for (const [index, input] of queries.entries()) {
+        const query = input.q.trim();
+        if (!query) {
+          blocks.push(`Query ${index + 1}: invalid empty query.`);
+          continue;
+        }
+
+        const domains = (input.domains ?? [])
+          .map((domain) => domain.trim())
+          .filter(Boolean);
+
+        const category = resolveCategory(input.category);
+        if (category.error) {
+          blocks.push(`Query ${index + 1}: ${category.error}`);
+          continue;
+        }
+
+        const offset = resolveOffset(input.offset);
+        if (offset.error) {
+          blocks.push(`Query ${index + 1}: ${offset.error}`);
+          continue;
+        }
+        const limit = parseLimit(input.numResults ?? input.num_results);
+
+        let effectiveQuery = augmentQueryWithDomains(query, domains);
+        if (category.bang) {
+          effectiveQuery = `${category.bang} ${effectiveQuery}`;
+        }
+
+        try {
+          const timeRange = mapRecencyToTimeRange(input.recency);
+          const neededCount = offset.value + limit;
+          const collected: SearxngResult[] = [];
+          let firstResponse: SearxngResponse | undefined;
+
+          for (
+            let page = 1;
+            page <= MAX_PAGE_FETCHES && collected.length < neededCount;
+            page += 1
+          ) {
+            const url = buildQueryUrl(baseUrl, {
+              query: effectiveQuery,
+              timeRange,
+              pageNumber: page,
+            });
+            const response = await fetch(url, {
+              method: "GET",
+              headers: {
+                accept: "application/json",
+              },
+              signal,
+            });
+
+            if (!response.ok) {
+              const body = await response.text();
+              await client.app.log({
+                body: {
+                  service: "web-search-plugin",
+                  level: "error",
+                  message: `web_search request failed: HTTP ${response.status} ${response.statusText}`,
+                  extra: {
+                    queryIndex: index + 1,
+                    query,
+                    category: input.category ?? null,
+                    offset: offset.value,
+                    numResults: limit,
+                    status: response.status,
+                    statusText: response.statusText,
+                    responseBody: clampSnippet(body, 2000),
+                  },
+                },
+              });
+              blocks.push(
+                [
+                  `Query ${index + 1}: search request failed (HTTP ${response.status}).`,
+                  "If this persists, ask the user to check search backend/plugin logs and file details in ISSUES.md.",
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+              );
+              firstResponse = undefined;
+              break;
+            }
+
+            const pageData = asResponse(await response.json());
+            if (!firstResponse) {
+              firstResponse = pageData;
+            }
+
+            const pageResults = pageData.results;
+            if (pageResults.length === 0) {
+              break;
+            }
+            collected.push(...pageResults);
+          }
+
+          if (!firstResponse) {
+            continue;
+          }
+
+          const windowedResults = collected.slice(offset.value, offset.value + limit);
+          const data: SearxngResponse = {
+            ...firstResponse,
+            results: windowedResults,
+          };
+          blocks.push(
+            [
+              `Query ${index + 1}:`,
+              formatResults({
+                query,
+                category: input.category,
+                response: data,
+                offset: offset.value,
+                limit,
+              }),
+            ].join("\n"),
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await client.app.log({
+            body: {
+              service: "web-search-plugin",
+              level: "error",
+              message: "web_search execution error",
+              extra: {
+                queryIndex: index + 1,
+                query,
+                category: input.category ?? null,
+                offset: offset.value,
+                numResults: limit,
+                error: message,
+              },
+            },
+          });
+          blocks.push(
+            [
+              `Query ${index + 1}: search request failed.`,
+              "If this persists, ask the user to check search backend/plugin logs and file details in ISSUES.md.",
+            ].join("\n"),
+          );
+        }
+      }
+
+      return [
+        `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
+        ISSUE_REPORTING_HINT,
+        "",
+        blocks.join("\n\n---\n\n"),
+      ].join("\n");
+    },
+  });
+
   return {
     tool: {
       webfetch: tool({
@@ -621,10 +912,33 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
             const fetched = handler
               ? await handler.handle({ url: parsed })
               : await (async () => {
-                  const [statusCode, defaultResult] = await Promise.all([
-                    fetchHttpStatusCode(parsed),
-                    fetchWebContentWithW3M(parsed),
-                  ]);
+                  const httpMetadata = await fetchHttpMetadata(parsed);
+                  if (isPdfContentType(httpMetadata.contentType)) {
+                    const downloadResult = await downloadPdfToTemp(parsed);
+                    if (downloadResult.exitCode !== 0) {
+                      throw new Error(
+                        `pdf webfetch failed (exit ${downloadResult.exitCode}): ${downloadResult.stderrText.trim()}`,
+                      );
+                    }
+                    const savedPath = downloadResult.stdoutText.trim();
+                    const details = [
+                      `Binary content detected: ${httpMetadata.contentType}.`,
+                      `Saved PDF: ${savedPath}`,
+                    ];
+                    if (httpMetadata.contentLength !== undefined) {
+                      details.push(`Content-Length: ${httpMetadata.contentLength} bytes`);
+                    }
+                    details.push(
+                      "PDF responses are downloaded directly to a temporary directory instead of being piped through w3m.",
+                    );
+                    details.push("Use your normal file-reading tools on the saved file.");
+                    return {
+                      routeName: "default/binary-pdf",
+                      sourceUrl: parsed.toString(),
+                      content: details.join("\n"),
+                    };
+                  }
+                  const defaultResult = await fetchWebContentWithW3M(parsed);
                   if (defaultResult.exitCode !== 0) {
                     throw new Error(
                       `default webfetch failed (exit ${defaultResult.exitCode}): ${defaultResult.stderrText.trim()}`,
@@ -632,7 +946,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                   }
                   const serviceMessage = formatArxivServiceMessage({
                     url: parsed,
-                    statusCode,
+                    statusCode: httpMetadata.statusCode,
                     content: defaultResult.stdoutText,
                   });
                   if (serviceMessage) {
@@ -698,238 +1012,8 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         },
       }),
 
-      websearch: tool({
-        description:
-          "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate.",
-        args: {
-          query: tool.schema.string(),
-          category: tool.schema.string().optional(),
-          numResults: tool.schema.number().optional(),
-          num_results: tool.schema.number().optional(),
-          offset: tool.schema.number().optional(),
-          recency: tool.schema.number().optional(),
-          domains: tool.schema.array(tool.schema.string()).optional(),
-          search_query: tool.schema
-            .array(
-              tool.schema.object({
-                q: tool.schema.string(),
-                category: tool.schema.string().optional(),
-                num_results: tool.schema.number().optional(),
-                numResults: tool.schema.number().optional(),
-                offset: tool.schema.number().optional(),
-                recency: tool.schema.number().optional(),
-                domains: tool.schema.array(tool.schema.string()).optional(),
-              }),
-            )
-            .min(1)
-            .optional(),
-        },
-        async execute(args, context) {
-          const baseUrl = SEARXNG_INSTANCE_URL;
-          if (!baseUrl) {
-            return [
-              `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-              ISSUE_REPORTING_HINT,
-              "Web search is unavailable in this environment. Ask the user to check plugin configuration.",
-            ].join("\n");
-          }
-
-          const rawQueries = args.search_query as SearchQueryInput[] | undefined;
-          const queries: SearchQueryInput[] =
-            rawQueries && rawQueries.length > 0
-              ? rawQueries
-              : [
-                  {
-                    q: args.query,
-                    category: args.category,
-                    num_results: args.num_results,
-                    numResults: args.numResults,
-                    offset: args.offset,
-                    recency: args.recency,
-                    domains: args.domains,
-                  },
-                ];
-          const firstQuery = queries[0]?.q?.trim() ?? "";
-          if (!firstQuery) {
-            return [
-              `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-              ISSUE_REPORTING_HINT,
-              "Invalid search_query: first query is empty.",
-            ].join("\n");
-          }
-
-          await context.ask({
-            permission: "websearch",
-            patterns: queries.map((item) => item.q.trim()).filter(Boolean),
-            always: ["*"],
-            metadata: {
-              query: firstQuery,
-              queryCount: queries.length,
-            },
-          });
-
-          const firstLimit = parseLimit(queries[0]?.numResults ?? queries[0]?.num_results ?? args.numResults ?? args.num_results);
-
-          context.metadata({
-            title: `Web search: ${firstQuery.slice(0, 72)}`,
-            metadata: {
-              numResults: firstLimit,
-              queryCount: queries.length,
-            },
-          });
-
-          const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
-          const signal = AbortSignal.any([context.abort, timeoutSignal]);
-
-          const blocks: string[] = [];
-
-          for (const [index, input] of queries.entries()) {
-            const query = input.q.trim();
-            if (!query) {
-              blocks.push(`Query ${index + 1}: invalid empty query.`);
-              continue;
-            }
-
-            const domains = (input.domains ?? [])
-              .map((domain) => domain.trim())
-              .filter(Boolean);
-
-            const category = resolveCategory(input.category);
-            if (category.error) {
-              blocks.push(`Query ${index + 1}: ${category.error}`);
-              continue;
-            }
-
-            const offset = resolveOffset(input.offset);
-            if (offset.error) {
-              blocks.push(`Query ${index + 1}: ${offset.error}`);
-              continue;
-            }
-            const limit = parseLimit(input.numResults ?? input.num_results);
-
-            let effectiveQuery = augmentQueryWithDomains(query, domains);
-            if (category.bang) {
-              effectiveQuery = `${category.bang} ${effectiveQuery}`;
-            }
-
-            try {
-              const timeRange = mapRecencyToTimeRange(input.recency);
-              const neededCount = offset.value + limit;
-              const collected: SearxngResult[] = [];
-              let firstResponse: SearxngResponse | undefined;
-
-              for (let page = 1; page <= MAX_PAGE_FETCHES && collected.length < neededCount; page += 1) {
-                const url = buildQueryUrl(baseUrl, {
-                  query: effectiveQuery,
-                  timeRange,
-                  pageNumber: page,
-                });
-                const response = await fetch(url, {
-                  method: "GET",
-                  headers: {
-                    accept: "application/json",
-                  },
-                  signal,
-                });
-
-                if (!response.ok) {
-                  const body = await response.text();
-                  await client.app.log({
-                    body: {
-                      service: "web-search-plugin",
-                      level: "error",
-                      message: `web_search request failed: HTTP ${response.status} ${response.statusText}`,
-                      extra: {
-                        queryIndex: index + 1,
-                        query,
-                        category: input.category ?? null,
-                        offset: offset.value,
-                        numResults: limit,
-                        status: response.status,
-                        statusText: response.statusText,
-                        responseBody: clampSnippet(body, 2000),
-                      },
-                    },
-                  });
-                  blocks.push(
-                    [
-                      `Query ${index + 1}: search request failed (HTTP ${response.status}).`,
-                      "If this persists, ask the user to check search backend/plugin logs and file details in ISSUES.md.",
-                    ]
-                      .filter(Boolean)
-                      .join("\n"),
-                  );
-                  firstResponse = undefined;
-                  break;
-                }
-
-                const pageData = asResponse(await response.json());
-                if (!firstResponse) {
-                  firstResponse = pageData;
-                }
-
-                const pageResults = pageData.results;
-                if (pageResults.length === 0) {
-                  break;
-                }
-                collected.push(...pageResults);
-              }
-
-              if (!firstResponse) {
-                continue;
-              }
-
-              const windowedResults = collected.slice(offset.value, offset.value + limit);
-              const data: SearxngResponse = {
-                ...firstResponse,
-                results: windowedResults,
-              };
-              blocks.push(
-                [
-                  `Query ${index + 1}:`,
-                  formatResults({
-                    query,
-                    category: input.category,
-                    response: data,
-                    offset: offset.value,
-                    limit,
-                  }),
-                ].join("\n"),
-              );
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              await client.app.log({
-                body: {
-                  service: "web-search-plugin",
-                  level: "error",
-                  message: "web_search execution error",
-                  extra: {
-                    queryIndex: index + 1,
-                    query,
-                    category: input.category ?? null,
-                    offset: offset.value,
-                    numResults: limit,
-                    error: message,
-                  },
-                },
-              });
-              blocks.push(
-                [
-                  `Query ${index + 1}: search request failed.`,
-                  "If this persists, ask the user to check search backend/plugin logs and file details in ISSUES.md.",
-                ].join("\n"),
-              );
-            }
-          }
-
-          return [
-            `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-            ISSUE_REPORTING_HINT,
-            "",
-            blocks.join("\n\n---\n\n"),
-          ].join("\n");
-        },
-      }),
+      websearch: websearchTool,
+      improved_websearch: websearchTool,
     },
   };
 };

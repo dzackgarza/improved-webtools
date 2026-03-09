@@ -2,32 +2,13 @@
 
 ## Known Gaps
 
-### Override behavior not confirmed via real-agent test
+### `websearch` is suppressed by current OpenCode tool listing
 
-The `webfetch` and `websearch` tools registered here shadow the OpenCode built-ins.
-Whether OpenCode actually routes calls to this plugin vs the built-in has not been
-confirmed via live agent invocation.
-
-**Status:** ❌ Not yet tested  
-**Test (webfetch):** From `.config/`, run:
-
-```bash
-cd /home/dzack/opencode-plugins/improved-webtools/.config
-/home/dzack/.opencode/bin/opencode run \
-  "Fetch https://example.com using the webfetch tool. Report the exact pass code from the tool output. It starts with PASS_WEBFETCH."
-```
-
-Expected in output: `PASS_WEBFETCH_SHADOW_20260305_C3D2`
-
-**Test (websearch):** From `.config/`, run:
-
-```bash
-cd /home/dzack/opencode-plugins/improved-webtools/.config
-/home/dzack/.opencode/bin/opencode run \
-  "Search for 'openai' using the websearch tool. Report the exact pass code from the tool output. It starts with PASS_WEB_SEARCH."
-```
-
-Expected in output: `PASS_WEB_SEARCH_SHADOW_20260305_6A9F`
+On March 9, 2026, a minimal throwaway plugin proved that a plugin tool literally named
+`websearch` is omitted from the agent-visible tool list in this OpenCode build, while the
+same implementation under another name is visible. The package now exposes
+`improved_websearch` as the proofable OpenCode-facing alias while keeping `websearch`
+for compatibility and MCP use.
 
 ### SEARXNG_INSTANCE_URL not set in most environments
 
@@ -40,18 +21,6 @@ confirmed without a live SearXNG instance.
 The `youtube` handler calls `yt-dlp` + Whisper via `uvx`. The `reddit` handler calls
 the Apify actor `spry_wholemeal/reddit-scraper`. Neither is available in CI. These
 handlers are only tested against fixture data — real network behavior is untested.
-
-### MCP server tests require Python environment
-
-The `mcp-server/` subdirectory has its own Python venv and pytest suite. These tests
-are not run by `bun test`. They must be run separately via:
-
-```bash
-cd improved-webtools/mcp-server
-uv run pytest tests/
-```
-
-They have not been run in this session.
 
 ### Token counting depends on js-tiktoken model availability
 
