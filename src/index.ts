@@ -17,6 +17,7 @@ import {
   WIKIPEDIA_DOMAINS,
   YOUTUBE_DOMAINS,
 } from "./webfetch-handlers/index.ts";
+import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
 
 type SearxngResult = {
   title: string;
@@ -46,6 +47,8 @@ type SearchQueryInput = {
   domains?: string[];
 };
 
+type WebFetchCacheMode = "default" | "refresh";
+
 const SEARXNG_INSTANCE_URL = (process.env.SEARXNG_INSTANCE_URL ?? "").trim();
 const DEFAULT_TIMEOUT_MS = 15_000;
 const WEBFETCH_COMMAND_TIMEOUT_MS = 30_000;
@@ -65,8 +68,6 @@ const WEBFETCH_CACHE_TTL_MS =
     ? WEBFETCH_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
     : 90 * 24 * 60 * 60 * 1000;
 const TOKEN_ENCODER = getEncoding("o200k_base");
-export const PASSPHRASE_WEB_SEARCH = "PASS_WEB_SEARCH_SHADOW_20260305_6A9F";
-export const PASSPHRASE_WEBFETCH = "PASS_WEBFETCH_SHADOW_20260305_C3D2";
 const ISSUE_REPORTING_HINT =
   "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.";
 const REDDIT_APIFY_ACTOR = (process.env.REDDIT_APIFY_ACTOR ?? "spry_wholemeal/reddit-scraper").trim();
@@ -133,6 +134,20 @@ function countTokens(text: string): number {
   return TOKEN_ENCODER.encode(text).length;
 }
 
+function resolveWebFetchCacheMode(cacheMode?: string): { value: WebFetchCacheMode; error?: string } {
+  const normalized = (cacheMode ?? "default").trim().toLowerCase();
+  if (normalized === "default" || normalized.length === 0) {
+    return { value: "default" };
+  }
+  if (normalized === "refresh") {
+    return { value: "refresh" };
+  }
+  return {
+    value: "default",
+    error: `Invalid cache mode: ${JSON.stringify(cacheMode)}. Supported values are "default" and "refresh".`,
+  };
+}
+
 type WebFetchCachePayload = {
   url: string;
   routeName: string;
@@ -152,8 +167,12 @@ function webFetchCachePath(url: string): string {
   return `${WEBFETCH_CACHE_DIR}/${digest}.json`;
 }
 
-async function readWebFetchCache(url: string): Promise<WebFetchHandlerResult | undefined> {
+async function readWebFetchCache(
+  url: string,
+  cacheMode: WebFetchCacheMode,
+): Promise<WebFetchHandlerResult | undefined> {
   if (!WEBFETCH_CACHE_ENABLED) return undefined;
+  if (cacheMode === "refresh") return undefined;
   const path = webFetchCachePath(url);
   const file = Bun.file(path);
   if (!(await file.exists())) return undefined;
@@ -184,7 +203,10 @@ async function readWebFetchCache(url: string): Promise<WebFetchHandlerResult | u
   }
 }
 
-async function writeWebFetchCache(url: string, result: WebFetchHandlerResult): Promise<void> {
+async function writeWebFetchCache(
+  url: string,
+  result: WebFetchHandlerResult,
+): Promise<void> {
   if (!WEBFETCH_CACHE_ENABLED) return;
   if (result.routeName.includes("/binary")) return;
   if (result.routeName.startsWith("arxiv/library")) return;
@@ -866,6 +888,8 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         args: {
           url: tool.schema.string(),
           prompt: tool.schema.string().optional(),
+          cacheMode: tool.schema.string().optional(),
+          cache_mode: tool.schema.string().optional(),
         },
         async execute(args, context) {
           const rawUrl = args.url.trim();
@@ -902,8 +926,16 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
           });
 
           try {
+            const resolvedCacheMode = resolveWebFetchCacheMode(args.cacheMode ?? args.cache_mode);
+            if (resolvedCacheMode.error) {
+              return [
+                `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
+                ISSUE_REPORTING_HINT,
+                resolvedCacheMode.error,
+              ].join("\n");
+            }
             const cacheKey = parsed.toString();
-            const cached = await readWebFetchCache(cacheKey);
+            const cached = await readWebFetchCache(cacheKey, resolvedCacheMode.value);
             if (cached) {
               return formatWebFetchOutput({
                 routeName: `${cached.routeName}/cache`,
@@ -913,7 +945,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
             }
             const handler = findWebFetchHandler(webFetchDomainHandlers, parsed);
             const fetched = isArxivLibraryUrl(parsed)
-              ? await fetchArxivLibraryContent({ url: parsed })
+              ? await fetchArxivLibraryContent({ url: parsed, cacheMode: resolvedCacheMode.value })
               : handler
                 ? await handler.handle({ url: parsed })
               : await (async () => {

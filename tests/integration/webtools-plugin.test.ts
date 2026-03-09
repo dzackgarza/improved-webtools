@@ -1,21 +1,22 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import {
-  PASSPHRASE_WEBFETCH,
-  PASSPHRASE_WEB_SEARCH,
-} from "../../src/index";
+import { PASSPHRASE_WEBFETCH, PASSPHRASE_WEB_SEARCH } from "../../src/passphrases";
 
 const OPENCODE = "/home/dzack/.opencode/bin/opencode";
 const TOOL_DIR = "/home/dzack/opencode-plugins/improved-webtools";
 const MAX_BUFFER = 8 * 1024 * 1024;
 
 function run(prompt: string, timeout = 180_000) {
-  spawnSync("direnv", ["allow", TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
-  const result = spawnSync(
-    "direnv",
-    ["exec", TOOL_DIR, OPENCODE, "run", "--agent", "Minimal", prompt],
-    { cwd: process.env.HOME, encoding: "utf8", timeout, maxBuffer: MAX_BUFFER },
-  );
+  const result = spawnSync(OPENCODE, ["run", "--agent", "Minimal", prompt], {
+    cwd: TOOL_DIR,
+    encoding: "utf8",
+    timeout,
+    maxBuffer: MAX_BUFFER,
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG: `${TOOL_DIR}/.config/opencode.json`,
+    },
+  });
   if (result.error) throw result.error;
   return (result.stdout ?? "") + (result.stderr ?? "");
 }

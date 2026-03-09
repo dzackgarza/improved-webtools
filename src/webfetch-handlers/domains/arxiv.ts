@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 
 import type { CommandExecutionResult, RunCommand, WebFetchHandlerResult } from "../types.ts";
 
@@ -45,7 +45,10 @@ type FetchArxivLibraryContentInput = {
   fetchImpl?: FetchImpl;
   runCommand?: RunCommand;
   now?: Date;
+  cacheMode?: "default" | "refresh";
 };
+
+type ArxivLibraryStatus = "built" | "hit" | "refreshed";
 
 function xmlEntityDecode(text: string): string {
   return text
@@ -105,6 +108,27 @@ function metadataFromApiXml(arxivId: string, feedXml: string): ArxivMetadata {
 
 function yamlString(text: string): string {
   return JSON.stringify(text);
+}
+
+function parseYamlJsonString(label: string, contents: string | undefined): string {
+  if (!contents) return "";
+  const match = contents.match(new RegExp(`^${label}:\\s+(".*")$`, "m"));
+  if (!match) return "";
+  try {
+    return JSON.parse(match[1]!);
+  } catch {
+    return "";
+  }
+}
+
+async function updateYamlTimestamp(path: string, label: string, value: string): Promise<void> {
+  const existing = await readMaybe(path);
+  if (!existing) return;
+  const line = `${label}: ${yamlString(value)}`;
+  const next = existing.match(new RegExp(`^${label}:\\s+.*$`, "m"))
+    ? existing.replace(new RegExp(`^${label}:\\s+.*$`, "m"), line)
+    : `${existing.trimEnd()}\n${line}\n`;
+  await writeFile(path, next);
 }
 
 function yamlList(values: string[], indent = 0): string[] {
@@ -310,8 +334,9 @@ function buildMetadataYaml(input: {
   artifacts: ArxivLibraryArtifacts;
   pdfSizeBytes?: number;
   sourceSizeBytes?: number;
-  cacheStatus: "built" | "hit";
+  cacheStatus: ArxivLibraryStatus;
   processedAt: string;
+  lastAccessedAt: string;
   markdownPath?: string;
   htmlPath?: string;
 }): string {
@@ -345,6 +370,7 @@ function buildMetadataYaml(input: {
     `source_size_bytes: ${input.sourceSizeBytes ?? 0}`,
     `cache_status: ${yamlString(input.cacheStatus)}`,
     `processed_at: ${yamlString(input.processedAt)}`,
+    `last_accessed_at: ${yamlString(input.lastAccessedAt)}`,
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -352,7 +378,8 @@ function buildMetadataYaml(input: {
 function buildSummaryMarkdown(input: {
   metadata: ArxivMetadata;
   artifacts: ArxivLibraryArtifacts;
-  cacheStatus: "built" | "hit";
+  cacheStatus: ArxivLibraryStatus;
+  lastAccessedAt: string;
   markdownPath?: string;
   htmlPath?: string;
 }): string {
@@ -373,6 +400,7 @@ function buildSummaryMarkdown(input: {
     "",
     `- ArXiv ID: \`${metadata.arxivId}\``,
     `- Cache status: ${input.cacheStatus}`,
+    `- Last accessed: ${input.lastAccessedAt}`,
     metadata.authors.length > 0 ? `- Authors: ${metadata.authors.join(", ")}` : "",
     metadata.primaryCategory ? `- Primary category: ${metadata.primaryCategory}` : "",
     metadata.publishedDate ? `- Published: ${metadata.publishedDate}` : "",
@@ -395,13 +423,14 @@ async function ensureArxivArtifacts(input: {
   fetchImpl: FetchImpl;
   runCommand: RunCommand;
   now: Date;
+  cacheMode: "default" | "refresh";
 }): Promise<{
-  cacheStatus: "built" | "hit";
+  cacheStatus: ArxivLibraryStatus;
   metadata: ArxivMetadata;
   markdownPath?: string;
   htmlPath?: string;
 }> {
-  const { arxivId, artifacts, fetchImpl, runCommand, now } = input;
+  const { arxivId, artifacts, fetchImpl, runCommand, now, cacheMode } = input;
   await ensureDir(artifacts.paperDir);
 
   const alreadyCached =
@@ -409,20 +438,18 @@ async function ensureArxivArtifacts(input: {
     (await fileExists(artifacts.summaryPath)) &&
     (await fileExists(artifacts.pdfPath));
 
-  if (alreadyCached) {
+  if (alreadyCached && cacheMode !== "refresh") {
     const cachedMetadataYaml = await readMaybe(artifacts.metadataPath);
-    const cachedTitleMatch = cachedMetadataYaml?.match(/^title:\s+"(.*)"$/m);
-    const cachedAbstractMatch = cachedMetadataYaml?.match(/^abstract:\s+"(.*)"$/m);
-    const cachedPrimaryCategoryMatch = cachedMetadataYaml?.match(/^primary_category:\s+"(.*)"$/m);
+    await updateYamlTimestamp(artifacts.metadataPath, "last_accessed_at", now.toISOString());
     return {
       cacheStatus: "hit",
       metadata: {
         arxivId,
-        title: cleanupXmlText(cachedTitleMatch?.[1]),
+        title: parseYamlJsonString("title", cachedMetadataYaml),
         authors: [],
-        abstract: cleanupXmlText(cachedAbstractMatch?.[1]),
+        abstract: parseYamlJsonString("abstract", cachedMetadataYaml),
         categories: [],
-        primaryCategory: cleanupXmlText(cachedPrimaryCategoryMatch?.[1]),
+        primaryCategory: parseYamlJsonString("primary_category", cachedMetadataYaml),
         publishedDate: "",
         updatedDate: "",
         doi: "",
@@ -475,8 +502,9 @@ async function ensureArxivArtifacts(input: {
       artifacts,
       pdfSizeBytes: pdfBytes.byteLength,
       sourceSizeBytes: sourceBytes.byteLength,
-      cacheStatus: "built",
+      cacheStatus: cacheMode === "refresh" ? "refreshed" : "built",
       processedAt: now.toISOString(),
+      lastAccessedAt: now.toISOString(),
       markdownPath,
       htmlPath,
     }),
@@ -486,14 +514,15 @@ async function ensureArxivArtifacts(input: {
     buildSummaryMarkdown({
       metadata,
       artifacts,
-      cacheStatus: "built",
+      cacheStatus: cacheMode === "refresh" ? "refreshed" : "built",
+      lastAccessedAt: now.toISOString(),
       markdownPath,
       htmlPath,
     }),
   );
 
   return {
-    cacheStatus: "built",
+    cacheStatus: cacheMode === "refresh" ? "refreshed" : "built",
     metadata,
     markdownPath,
     htmlPath,
@@ -501,14 +530,16 @@ async function ensureArxivArtifacts(input: {
 }
 
 function formatArxivLibraryOutput(input: {
-  cacheStatus: "built" | "hit";
+  cacheStatus: ArxivLibraryStatus;
   artifacts: ArxivLibraryArtifacts;
   metadata: ArxivMetadata;
+  lastAccessedAt: string;
 }): string {
   const summary = [
     `Local arXiv library status: ${input.cacheStatus}`,
     `ArXiv ID: ${input.metadata.arxivId}`,
     `Title: ${input.metadata.title || "(unavailable)"}`,
+    `Last accessed: ${input.lastAccessedAt}`,
     `Artifact directory: ${input.artifacts.paperDir}`,
     `Summary file: ${input.artifacts.summaryPath}`,
     `Metadata file: ${input.artifacts.metadataPath}`,
@@ -538,12 +569,14 @@ export async function fetchArxivLibraryContent(
   const libraryDir = (input.libraryDir ?? DEFAULT_ARXIV_LIBRARY_DIR).trim();
   const artifacts = buildArtifacts(libraryDir, arxivId);
   const runCommand = input.runCommand ?? runLocalCommand;
+  const now = input.now ?? new Date();
   const { cacheStatus, metadata } = await ensureArxivArtifacts({
     arxivId,
     artifacts,
     fetchImpl: input.fetchImpl ?? fetch,
     runCommand,
-    now: input.now ?? new Date(),
+    now,
+    cacheMode: input.cacheMode ?? "default",
   });
 
   return {
@@ -553,6 +586,7 @@ export async function fetchArxivLibraryContent(
       cacheStatus,
       artifacts,
       metadata,
+      lastAccessedAt: now.toISOString(),
     }),
   };
 }

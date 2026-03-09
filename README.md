@@ -54,7 +54,20 @@ Schema:
 ```text
 url: string
 prompt?: string
+cacheMode?: "default" | "refresh"
+cache_mode?: "default" | "refresh"
 ```
+
+Special handling:
+
+- `arxiv.org/abs/...`, `arxiv.org/pdf/...`, `arxiv.org/src/...`, and `arxiv.org/html/...` are routed through a local artifact library instead of plain `w3m`
+- the library stores `pdf`, source archive, extracted source, BibTeX, `metadata.yaml`, `SUMMARY.md`, and best-effort markdown/html conversions
+- `metadata.yaml` records both `processed_at` and `last_accessed_at`
+- `cacheMode: "refresh"` bypasses the normal response cache and forces a fresh arXiv fetch that overwrites the local artifact directory
+
+Environment:
+
+- `WEBFETCH_ARXIV_LIBRARY_DIR` overrides the default artifact root at `~/.cache/opencode-arxiv-library`
 
 ### `websearch`
 
