@@ -69,6 +69,7 @@ Special handling:
 Environment:
 
 - `WEBFETCH_ARXIV_LIBRARY_DIR` overrides the default artifact root at `~/.cache/opencode-arxiv-library`
+- `REDDIT_APIFY_ACTOR` optionally overrides the Reddit actor used for live verification and handler calls
 
 ### `websearch`
 
@@ -91,4 +92,5 @@ Use when you need to search the web. Optional categories for narrowing only: new
 just typecheck
 just test
 just mcp-test
+just reddit-live-verify
 ```

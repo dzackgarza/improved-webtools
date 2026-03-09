@@ -16,3 +16,6 @@ mcp-test:
   cd mcp-server && uv run pytest
 
 check: typecheck test mcp-test
+
+reddit-live-verify:
+  bun scripts/verify-reddit-live.ts
