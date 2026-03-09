@@ -8,7 +8,7 @@ export const ARXIV_DOMAINS = ["arxiv.org", "www.arxiv.org"] as const;
 const DEFAULT_ARXIV_LIBRARY_DIR = (
   process.env.WEBFETCH_ARXIV_LIBRARY_DIR ?? `${process.env.HOME ?? "/tmp"}/.cache/opencode-arxiv-library`
 ).trim();
-const ARXIV_ID_PATTERN = /^(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})$/i;
+const ARXIV_ID_PATTERN = /^(?:[a-z.-]+\/\d{7}|\d{4}\.\d{4,5})$/i;
 
 type ArxivMetadata = {
   arxivId: string;
@@ -50,6 +50,14 @@ type FetchArxivLibraryContentInput = {
 };
 
 type ArxivLibraryStatus = "built" | "hit" | "refreshed";
+type ArxivStoredRecord = {
+  metadata: ArxivMetadata;
+  markdownPath?: string;
+  htmlPath?: string;
+  processedAt: string;
+  lastAccessedAt: string;
+  processingNotes: string[];
+};
 
 function xmlEntityDecode(text: string): string {
   return text
@@ -122,6 +130,26 @@ function parseYamlJsonString(label: string, contents: string | undefined): strin
   }
 }
 
+function parseYamlList(label: string, contents: string | undefined): string[] {
+  if (!contents) return [];
+  const lines = contents.split(/\r?\n/g);
+  const startIndex = lines.findIndex((line) => line === `${label}:`);
+  if (startIndex < 0) return [];
+
+  const values: string[] = [];
+  for (const line of lines.slice(startIndex + 1)) {
+    if (!line.startsWith("  ")) break;
+    const match = line.match(/^  -\s+(".*")$/);
+    if (!match) continue;
+    try {
+      values.push(JSON.parse(match[1]!));
+    } catch {
+      continue;
+    }
+  }
+  return values;
+}
+
 async function updateYamlTimestamp(path: string, label: string, value: string): Promise<void> {
   const existing = await readMaybe(path);
   if (!existing) return;
@@ -130,6 +158,31 @@ async function updateYamlTimestamp(path: string, label: string, value: string): 
     ? existing.replace(new RegExp(`^${label}:\\s+.*$`, "m"), line)
     : `${existing.trimEnd()}\n${line}\n`;
   await writeFile(path, next);
+}
+
+function parseStoredArxivRecord(arxivId: string, contents: string | undefined): ArxivStoredRecord {
+  return {
+    metadata: {
+      arxivId,
+      title: parseYamlJsonString("title", contents),
+      authors: parseYamlList("authors", contents),
+      abstract: parseYamlJsonString("abstract", contents),
+      categories: parseYamlList("categories", contents),
+      primaryCategory: parseYamlJsonString("primary_category", contents),
+      publishedDate: parseYamlJsonString("published_date", contents),
+      updatedDate: parseYamlJsonString("updated_date", contents),
+      doi: parseYamlJsonString("doi", contents),
+      journalRef: parseYamlJsonString("journal_ref", contents),
+      abstractUrl: parseYamlJsonString("abstract_url", contents) || `https://arxiv.org/abs/${arxivId}`,
+      pdfUrl: parseYamlJsonString("pdf_url", contents) || `https://arxiv.org/pdf/${arxivId}.pdf`,
+      sourceUrl: parseYamlJsonString("source_url", contents) || `https://arxiv.org/e-print/${arxivId}`,
+    },
+    markdownPath: parseYamlJsonString("markdown_path", contents) || undefined,
+    htmlPath: parseYamlJsonString("html_path", contents) || undefined,
+    processedAt: parseYamlJsonString("processed_at", contents),
+    lastAccessedAt: parseYamlJsonString("last_accessed_at", contents),
+    processingNotes: parseYamlList("processing_notes", contents),
+  };
 }
 
 function yamlList(values: string[], indent = 0): string[] {
@@ -290,8 +343,28 @@ async function maybeExtractSourceArchive(
   archiveBytes: Uint8Array,
   runCommand: RunCommand,
   arxivId: string,
-): Promise<void> {
+): Promise<"validated-tar" | "raw-tex"> {
   await ensureDir(artifacts.sourceDir);
+  const listing = await runCommand(["tar", "-tzf", artifacts.sourceArchivePath]);
+  if (listing.exitCode !== 0) {
+    const fallbackTex = join(artifacts.sourceDir, `${basename(arxivId)}.tex`);
+    await writeFile(fallbackTex, archiveBytes);
+    return "raw-tex";
+  }
+
+  const unsafeEntry = listing.stdoutText
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .find((entry) => {
+      if (entry.startsWith("/")) return true;
+      const normalized = entry.replaceAll("\\", "/");
+      return normalized.split("/").some((part) => part === "..");
+    });
+  if (unsafeEntry) {
+    throw new Error(`unsafe arXiv source archive entry: ${unsafeEntry}`);
+  }
+
   const extract = await runCommand([
     "tar",
     "-xzf",
@@ -299,10 +372,8 @@ async function maybeExtractSourceArchive(
     "-C",
     artifacts.sourceDir,
   ]);
-  if (extract.exitCode === 0) return;
-
-  const fallbackTex = join(artifacts.sourceDir, `${basename(arxivId)}.tex`);
-  await writeFile(fallbackTex, archiveBytes);
+  if (extract.exitCode === 0) return "validated-tar";
+  throw new Error(`failed to extract arXiv source archive: ${extract.stderrText.trim()}`);
 }
 
 async function maybeConvertTex(mainTexPath: string, outputPath: string, to: "markdown" | "html", runCommand: RunCommand): Promise<boolean> {
@@ -348,6 +419,7 @@ function buildMetadataYaml(input: {
   cacheStatus: ArxivLibraryStatus;
   processedAt: string;
   lastAccessedAt: string;
+  processingNotes: string[];
   markdownPath?: string;
   htmlPath?: string;
 }): string {
@@ -382,6 +454,8 @@ function buildMetadataYaml(input: {
     `cache_status: ${yamlString(input.cacheStatus)}`,
     `processed_at: ${yamlString(input.processedAt)}`,
     `last_accessed_at: ${yamlString(input.lastAccessedAt)}`,
+    "processing_notes:",
+    ...yamlList(input.processingNotes, 2),
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -437,9 +511,7 @@ async function ensureArxivArtifacts(input: {
   cacheMode: "default" | "refresh";
 }): Promise<{
   cacheStatus: ArxivLibraryStatus;
-  metadata: ArxivMetadata;
-  markdownPath?: string;
-  htmlPath?: string;
+  record: ArxivStoredRecord;
 }> {
   const { arxivId, artifacts, fetchImpl, runCommand, now, cacheMode } = input;
   await ensureDir(artifacts.paperDir);
@@ -450,46 +522,36 @@ async function ensureArxivArtifacts(input: {
     (await fileExists(artifacts.pdfPath));
 
   if (alreadyCached && cacheMode !== "refresh") {
-    const cachedMetadataYaml = await readMaybe(artifacts.metadataPath);
     await updateYamlTimestamp(artifacts.metadataPath, "last_accessed_at", now.toISOString());
+    const record = parseStoredArxivRecord(arxivId, await readMaybe(artifacts.metadataPath));
     return {
       cacheStatus: "hit",
-      metadata: {
-        arxivId,
-        title: parseYamlJsonString("title", cachedMetadataYaml),
-        authors: [],
-        abstract: parseYamlJsonString("abstract", cachedMetadataYaml),
-        categories: [],
-        primaryCategory: parseYamlJsonString("primary_category", cachedMetadataYaml),
-        publishedDate: "",
-        updatedDate: "",
-        doi: "",
-        journalRef: "",
-        abstractUrl: `https://arxiv.org/abs/${arxivId}`,
-        pdfUrl: `https://arxiv.org/pdf/${arxivId}.pdf`,
-        sourceUrl: `https://arxiv.org/e-print/${arxivId}`,
+      record: {
+        ...record,
+        lastAccessedAt: now.toISOString(),
       },
-      markdownPath: (await fileExists(join(artifacts.paperDir, `${basename(arxivId)}.md`)))
-        ? join(artifacts.paperDir, `${basename(arxivId)}.md`)
-        : undefined,
-      htmlPath: (await fileExists(join(artifacts.paperDir, `${basename(arxivId)}.html`)))
-        ? join(artifacts.paperDir, `${basename(arxivId)}.html`)
-        : undefined,
     };
   }
 
   const apiXml = await fetchTextOrThrow(
     fetchImpl,
-    `http://export.arxiv.org/api/query?id_list=${encodeURIComponent(arxivId)}&max_results=1`,
+    `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(arxivId)}&max_results=1`,
   );
   const metadata = metadataFromApiXml(arxivId, apiXml);
+  const processingNotes = ["Metadata fetched from arXiv API", "PDF downloaded from arXiv"];
 
   const pdfBytes = await fetchBytesOrThrow(fetchImpl, metadata.pdfUrl);
   await writeFile(artifacts.pdfPath, pdfBytes);
 
   const sourceBytes = await fetchBytesOrThrow(fetchImpl, metadata.sourceUrl);
   await writeFile(artifacts.sourceArchivePath, sourceBytes);
-  await maybeExtractSourceArchive(artifacts, sourceBytes, runCommand, arxivId);
+  processingNotes.push("Source archive downloaded from arXiv");
+  const extractionMode = await maybeExtractSourceArchive(artifacts, sourceBytes, runCommand, arxivId);
+  processingNotes.push(
+    extractionMode === "validated-tar"
+      ? "Source archive extracted with validated tar paths"
+      : "Source payload was not a tar archive; wrote raw source bytes to a .tex fallback",
+  );
 
   let markdownPath: string | undefined;
   let htmlPath: string | undefined;
@@ -499,10 +561,15 @@ async function ensureArxivArtifacts(input: {
     const candidateHtmlPath = join(artifacts.paperDir, `${basename(arxivId)}.html`);
     if (await maybeConvertTex(mainTexPath, candidateMarkdownPath, "markdown", runCommand)) {
       markdownPath = candidateMarkdownPath;
+      processingNotes.push("Pandoc markdown conversion completed");
     }
     if (await maybeConvertTex(mainTexPath, candidateHtmlPath, "html", runCommand)) {
       htmlPath = candidateHtmlPath;
+      processingNotes.push("Pandoc HTML conversion completed");
     }
+  }
+  if (!mainTexPath) {
+    processingNotes.push("No main LaTeX file found in extracted source");
   }
 
   await writeFile(artifacts.bibtexPath, buildBibtex(metadata));
@@ -516,6 +583,7 @@ async function ensureArxivArtifacts(input: {
       cacheStatus: cacheMode === "refresh" ? "refreshed" : "built",
       processedAt: now.toISOString(),
       lastAccessedAt: now.toISOString(),
+      processingNotes,
       markdownPath,
       htmlPath,
     }),
@@ -534,37 +602,55 @@ async function ensureArxivArtifacts(input: {
 
   return {
     cacheStatus: cacheMode === "refresh" ? "refreshed" : "built",
-    metadata,
-    markdownPath,
-    htmlPath,
+    record: {
+      metadata,
+      markdownPath,
+      htmlPath,
+      processedAt: now.toISOString(),
+      lastAccessedAt: now.toISOString(),
+      processingNotes,
+    },
   };
 }
 
 function formatArxivLibraryOutput(input: {
   cacheStatus: ArxivLibraryStatus;
   artifacts: ArxivLibraryArtifacts;
-  metadata: ArxivMetadata;
-  lastAccessedAt: string;
+  record: ArxivStoredRecord;
 }): string {
+  const { metadata } = input.record;
   const summary = [
     `Local arXiv library status: ${input.cacheStatus}`,
-    `ArXiv ID: ${input.metadata.arxivId}`,
-    `Title: ${input.metadata.title || "(unavailable)"}`,
-    `Last accessed: ${input.lastAccessedAt}`,
+    `ArXiv ID: ${metadata.arxivId}`,
+    `Title: ${metadata.title || "(unavailable)"}`,
+    `Authors: ${metadata.authors.length > 0 ? metadata.authors.join(", ") : "(unavailable)"}`,
+    `Primary category: ${metadata.primaryCategory || "(unavailable)"}`,
+    `Published: ${metadata.publishedDate || "(unavailable)"}`,
+    `Updated: ${metadata.updatedDate || "(unavailable)"}`,
+    `DOI: ${metadata.doi || "(unavailable)"}`,
+    `Journal reference: ${metadata.journalRef || "(unavailable)"}`,
+    `Processed at: ${input.record.processedAt || "(unavailable)"}`,
+    `Last accessed: ${input.record.lastAccessedAt || "(unavailable)"}`,
     `Artifact directory: ${input.artifacts.paperDir}`,
     `Summary file: ${input.artifacts.summaryPath}`,
     `Metadata file: ${input.artifacts.metadataPath}`,
     `PDF file: ${input.artifacts.pdfPath}`,
+    `Source archive file: ${input.artifacts.sourceArchivePath}`,
     `Source directory: ${input.artifacts.sourceDir}`,
     `BibTeX file: ${input.artifacts.bibtexPath}`,
+    `Markdown file: ${input.record.markdownPath ?? "(not generated)"}`,
+    `HTML file: ${input.record.htmlPath ?? "(not generated)"}`,
   ];
-  if (input.metadata.primaryCategory) {
-    summary.push(`Primary category: ${input.metadata.primaryCategory}`);
+  if (input.record.processingNotes.length > 0) {
+    summary.push("Processing notes:");
+    for (const note of input.record.processingNotes) {
+      summary.push(`- ${note}`);
+    }
   }
-  if (input.metadata.abstract) {
+  if (metadata.abstract) {
     summary.push("");
     summary.push("Abstract:");
-    summary.push(input.metadata.abstract);
+    summary.push(metadata.abstract);
   }
   return `${summary.join("\n")}\n`;
 }
@@ -581,7 +667,7 @@ export async function fetchArxivLibraryContent(
   const artifacts = buildArtifacts(libraryDir, arxivId);
   const runCommand = input.runCommand ?? runLocalCommand;
   const now = input.now ?? new Date();
-  const { cacheStatus, metadata } = await ensureArxivArtifacts({
+  const { cacheStatus, record } = await ensureArxivArtifacts({
     arxivId,
     artifacts,
     fetchImpl: input.fetchImpl ?? fetch,
@@ -596,8 +682,7 @@ export async function fetchArxivLibraryContent(
     content: formatArxivLibraryOutput({
       cacheStatus,
       artifacts,
-      metadata,
-      lastAccessedAt: now.toISOString(),
+      record,
     }),
   };
 }
