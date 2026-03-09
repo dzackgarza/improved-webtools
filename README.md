@@ -63,8 +63,8 @@ Special handling:
 - `arxiv.org/abs/...`, `arxiv.org/pdf/...`, `arxiv.org/src/...`, and `arxiv.org/html/...` are routed through a local artifact library instead of plain `w3m`
 - the library stores `pdf`, source archive, extracted source, BibTeX, `metadata.yaml`, `SUMMARY.md`, and best-effort markdown/html conversions
 - `metadata.yaml` records both `processed_at` and `last_accessed_at`
-- `cacheMode: "refresh"` is plugin-wide: it bypasses cached reads and forces a fresh fetch
-- for arXiv URLs, that same mode also overwrites the local artifact directory
+- `cacheMode: "refresh"` is the stale-result lever: it bypasses cached reads and forces a fresh fetch when you suspect the current result is outdated
+- for arXiv URLs, that same mode also rebuilds the local artifact directory from scratch
 
 Environment:
 
