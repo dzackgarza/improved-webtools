@@ -35,4 +35,11 @@ describe("improved-webtools live e2e", () => {
     );
     expect(output).toContain(PASSPHRASE_WEB_SEARCH);
   }, 200_000);
+
+  it("proves the reddit handler executes a fresh Apify-backed fetch", () => {
+    const output = run(
+      "Call the tool named webfetch with url=https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/ and cache_mode=refresh. Then reply with ONLY the exact values for the Author line and Comments extracted line from the tool output, separated by ' | '.",
+    );
+    expect(output).toContain("Author: u/Thinklikeachef | Comments extracted: 25");
+  }, 200_000);
 });
