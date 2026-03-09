@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -114,6 +115,7 @@ describe("searxng-search plugin", () => {
   const originalCacheEnabled = process.env.WEBFETCH_CACHE_ENABLED;
   const originalCacheDir = process.env.WEBFETCH_CACHE_DIR;
   const originalCacheTtlDays = process.env.WEBFETCH_CACHE_TTL_DAYS;
+  const originalArxivLibraryDir = process.env.WEBFETCH_ARXIV_LIBRARY_DIR;
 
   beforeEach(() => {
     globalThis.fetch = originalFetch;
@@ -136,6 +138,9 @@ describe("searxng-search plugin", () => {
     if (originalCacheTtlDays === undefined)
       delete process.env.WEBFETCH_CACHE_TTL_DAYS;
     else process.env.WEBFETCH_CACHE_TTL_DAYS = originalCacheTtlDays;
+    if (originalArxivLibraryDir === undefined)
+      delete process.env.WEBFETCH_ARXIV_LIBRARY_DIR;
+    else process.env.WEBFETCH_ARXIV_LIBRARY_DIR = originalArxivLibraryDir;
   });
 
   it("formats batched websearch results with per-query pagination and separation", async () => {
@@ -706,6 +711,112 @@ describe("searxng-search plugin", () => {
       expect(refreshed).toContain("refreshed page content");
       expect(afterRefresh).toContain("Route: default/cache");
       expect(afterRefresh).toContain("refreshed page content");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("bypasses generic webfetch cache for arxiv URLs and builds the local library", async () => {
+    const tempRoot = await mkdtemp("/tmp/opencode-webfetch-arxiv-bypass-test-");
+    const cacheDir = join(tempRoot, "cache");
+    const libraryDir = join(tempRoot, "library");
+    const arxivUrl = "https://arxiv.org/abs/2401.12345";
+    const cachePath = join(cacheDir, `${createHash("sha256").update(arxivUrl).digest("hex")}.json`);
+
+    process.env.WEBFETCH_ARXIV_LIBRARY_DIR = libraryDir;
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        url: arxivUrl,
+        routeName: "default",
+        sourceUrl: arxivUrl,
+        content: "stale cached arxiv page",
+        cachedAt: new Date("2026-03-09T00:00:00Z").toISOString(),
+      }),
+    );
+
+    const apiXml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2401.12345v3</id>
+    <title>Distributionally Robust Receive Combining</title>
+    <updated>2025-06-17T20:37:32Z</updated>
+    <published>2024-01-22T19:00:00Z</published>
+    <author><name>Alice Example</name></author>
+    <summary>This article investigates signal estimation in wireless transmission.</summary>
+    <category term="eess.SP"/>
+  </entry>
+</feed>`;
+
+    try {
+      (globalThis as any).fetch = async (input: string | Request | URL) => {
+        const url = String(input);
+        if (url.includes("/api/query")) {
+          return new Response(apiXml, { status: 200 });
+        }
+        if (url.includes("/pdf/2401.12345.pdf")) {
+          return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
+        }
+        if (url.includes("/e-print/2401.12345")) {
+          return new Response("\\documentclass{article}\n\\begin{document}\nHello arXiv.\n\\end{document}\n", {
+            status: 200,
+          });
+        }
+        return new Response("unexpected", { status: 404, statusText: "Not Found" });
+      };
+
+      (Bun as any).spawn = (args: string[]) => {
+        if (args[0] === "tar" && args[1] === "-tzf") {
+          return {
+            stdout: streamFromText(""),
+            stderr: streamFromText("not a gzip archive"),
+            exited: Promise.resolve(1),
+          };
+        }
+        if (args[0] === "pandoc") {
+          const outputIndex = args.indexOf("--output");
+          const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
+          if (outputPath) {
+            writeFileSync(outputPath, args.includes("--to=gfm") ? "# arxiv markdown\n" : "<html></html>\n");
+          }
+          return {
+            stdout: streamFromText(""),
+            stderr: streamFromText(""),
+            exited: Promise.resolve(0),
+          };
+        }
+        return {
+          stdout: streamFromText("unexpected"),
+          stderr: streamFromText("unexpected"),
+          exited: Promise.resolve(1),
+        };
+      };
+
+      const { webfetch } = await loadPlugin("http://localhost/searxng", {
+        webfetchCacheEnabled: "1",
+        webfetchCacheDir: cacheDir,
+        webfetchCacheTtlDays: "90",
+      });
+      const context = buildContext();
+
+      const output = await webfetch.execute(
+        {
+          url: arxivUrl,
+        },
+        context as any,
+      );
+
+      expect(output).toContain("Route: arxiv/library");
+      expect(output).toContain("Local arXiv library status: built");
+      expect(output).not.toContain("Route: default/cache");
+      expect(output).not.toContain("stale cached arxiv page");
+      const artifactDirMatch = output.match(/^Artifact directory: (.+)$/m);
+      expect(artifactDirMatch?.[1]).toBeTruthy();
+      const artifactDir = artifactDirMatch![1]!;
+      expect(readFileSync(join(artifactDir, "metadata.yaml"), "utf8")).toContain(
+        'title: "Distributionally Robust Receive Combining"',
+      );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

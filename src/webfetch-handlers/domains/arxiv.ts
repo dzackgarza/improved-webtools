@@ -1,13 +1,10 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { hostMatchesDomain, type CommandExecutionResult, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
 
 export const ARXIV_DOMAINS = ["arxiv.org", "www.arxiv.org"] as const;
 
-const DEFAULT_ARXIV_LIBRARY_DIR = (
-  process.env.WEBFETCH_ARXIV_LIBRARY_DIR ?? `${process.env.HOME ?? "/tmp"}/.cache/opencode-arxiv-library`
-).trim();
 const ARXIV_ID_PATTERN = /^(?:[a-z.-]+\/\d{7}|\d{4}\.\d{4,5})$/i;
 
 type ArxivMetadata = {
@@ -514,6 +511,9 @@ async function ensureArxivArtifacts(input: {
   record: ArxivStoredRecord;
 }> {
   const { arxivId, artifacts, fetchImpl, runCommand, now, cacheMode } = input;
+  if (cacheMode === "refresh") {
+    await rm(artifacts.paperDir, { recursive: true, force: true });
+  }
   await ensureDir(artifacts.paperDir);
 
   const alreadyCached =
@@ -663,7 +663,7 @@ export async function fetchArxivLibraryContent(
     throw new Error("unsupported arXiv URL shape for local-library handling");
   }
 
-  const libraryDir = (input.libraryDir ?? DEFAULT_ARXIV_LIBRARY_DIR).trim();
+  const libraryDir = resolveArxivLibraryDir(input.libraryDir);
   const artifacts = buildArtifacts(libraryDir, arxivId);
   const runCommand = input.runCommand ?? runLocalCommand;
   const now = input.now ?? new Date();
@@ -685,4 +685,11 @@ export async function fetchArxivLibraryContent(
       record,
     }),
   };
+}
+function resolveArxivLibraryDir(override?: string): string {
+  return (
+    override ??
+    process.env.WEBFETCH_ARXIV_LIBRARY_DIR ??
+    `${process.env.HOME ?? "/tmp"}/.cache/opencode-arxiv-library`
+  ).trim();
 }

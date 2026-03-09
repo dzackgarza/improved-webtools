@@ -935,7 +935,10 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
               ].join("\n");
             }
             const cacheKey = parsed.toString();
-            const cached = await readWebFetchCache(cacheKey, resolvedCacheMode.value);
+            const useArxivLibrary = isArxivLibraryUrl(parsed);
+            const cached = useArxivLibrary
+              ? undefined
+              : await readWebFetchCache(cacheKey, resolvedCacheMode.value);
             if (cached) {
               return formatWebFetchOutput({
                 routeName: `${cached.routeName}/cache`,
@@ -944,7 +947,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
               });
             }
             const handler = findWebFetchHandler(webFetchDomainHandlers, parsed);
-            const fetched = isArxivLibraryUrl(parsed)
+            const fetched = useArxivLibrary
               ? await fetchArxivLibraryContent({ url: parsed, cacheMode: resolvedCacheMode.value })
               : handler
                 ? await handler.handle({ url: parsed })

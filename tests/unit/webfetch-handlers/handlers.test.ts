@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
@@ -512,6 +512,10 @@ describe("webfetch handler modules", () => {
       expect(fetchCalls.length).toBe(fetchCountAfterBuild);
       expect(readFileSync(metadataPath, "utf8")).toContain('last_accessed_at: "2026-03-10T00:00:00.000Z"');
 
+      const staleFilePath = join(paperDir, "source", "stale.tex");
+      writeFileSync(staleFilePath, "stale artifact");
+      expect(existsSync(staleFilePath)).toBe(true);
+
       const refreshed = await fetchArxivLibraryContent({
         url: new URL("https://arxiv.org/src/2401.12345"),
         libraryDir,
@@ -525,6 +529,7 @@ describe("webfetch handler modules", () => {
       expect(fetchCalls.length).toBeGreaterThan(fetchCountAfterBuild);
       expect(readFileSync(metadataPath, "utf8")).toContain('cache_status: "refreshed"');
       expect(readFileSync(metadataPath, "utf8")).toContain('last_accessed_at: "2026-03-11T00:00:00.000Z"');
+      expect(existsSync(staleFilePath)).toBe(false);
     } finally {
       rmSync(libraryDir, { recursive: true, force: true });
     }
