@@ -1,13 +1,14 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import type { CommandExecutionResult, RunCommand, WebFetchHandlerResult } from "../types.ts";
+import { hostMatchesDomain, type CommandExecutionResult, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
 
 export const ARXIV_DOMAINS = ["arxiv.org", "www.arxiv.org"] as const;
 
 const DEFAULT_ARXIV_LIBRARY_DIR = (
   process.env.WEBFETCH_ARXIV_LIBRARY_DIR ?? `${process.env.HOME ?? "/tmp"}/.cache/opencode-arxiv-library`
 ).trim();
+const ARXIV_ID_PATTERN = /^(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})$/i;
 
 type ArxivMetadata = {
   arxivId: string;
@@ -230,7 +231,18 @@ function stripVersionSuffix(arxivId: string): string {
   return arxivId.replace(/v\d+$/i, "");
 }
 
+function isArxivHost(url: URL): boolean {
+  return ARXIV_DOMAINS.some((domain) => hostMatchesDomain(url.hostname, domain));
+}
+
+function normalizeArxivId(candidate: string): string | undefined {
+  const normalized = stripVersionSuffix(candidate.replace(/\/+$/g, "").trim());
+  if (!ARXIV_ID_PATTERN.test(normalized)) return undefined;
+  return normalized;
+}
+
 export function extractArxivIdFromUrl(url: URL): string | undefined {
+  if (!isArxivHost(url)) return undefined;
   const decodedPath = decodeURIComponent(url.pathname);
   const matchers = [
     /^\/abs\/(.+)$/i,
@@ -242,14 +254,13 @@ export function extractArxivIdFromUrl(url: URL): string | undefined {
   for (const matcher of matchers) {
     const match = decodedPath.match(matcher);
     if (!match) continue;
-    const candidate = stripVersionSuffix(match[1]!.replace(/\/+$/g, "").trim());
-    if (candidate.length > 0) return candidate;
+    const candidate = normalizeArxivId(match[1]!);
+    if (candidate) return candidate;
   }
 
   const direct = decodedPath.replace(/^\/+/, "").trim();
-  if (/^(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})$/i.test(direct)) {
-    return direct;
-  }
+  const normalizedDirect = normalizeArxivId(direct);
+  if (normalizedDirect) return normalizedDirect;
 
   return undefined;
 }
