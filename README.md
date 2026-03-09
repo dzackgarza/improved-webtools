@@ -69,6 +69,8 @@ Special handling:
 Environment:
 
 - `WEBFETCH_ARXIV_LIBRARY_DIR` overrides the default artifact root at `~/.cache/opencode-arxiv-library`
+- `YTDLP_COOKIES_FILE` optionally points at a Netscape-format cookie jar for `yt-dlp` when YouTube bot-checks gate spoken/informational videos
+- `YOUTUBE_VERIFY_TIMEOUT_MS` optionally increases the per-command timeout used by `just youtube-live-verify` on slow CPU hosts during Whisper transcription
 
 ### `websearch`
 
@@ -91,4 +93,7 @@ Use when you need to search the web. Optional categories for narrowing only: new
 just typecheck
 just test
 just mcp-test
+YTDLP_COOKIES_FILE=/abs/path/to/youtube.cookies just youtube-live-verify
 ```
+
+`just youtube-live-verify` preflights `uvx`, `yt-dlp` via `uvx`, and `openai-whisper` via `uvx` before running a caption-backed TED proof, a no-subtitles Whisper proof, and an invalid-video failure check. On CPU-only hosts, the Whisper leg can take several minutes; set `YOUTUBE_VERIFY_TIMEOUT_MS` higher if it times out before transcription completes.
