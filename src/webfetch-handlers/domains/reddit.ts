@@ -154,24 +154,29 @@ export async function fetchRedditPostMarkdown(input: {
   };
 
   const inputPath = `/tmp/reddit-apify-input-${Date.now()}-${crypto.randomUUID()}.json`;
+  const outputPath = `/tmp/reddit-apify-output-${Date.now()}-${crypto.randomUUID()}.json`;
   await Bun.write(inputPath, JSON.stringify(actorInput));
   try {
     const result = await input.runCommand([
-      "apify",
-      "call",
-      input.apifyActor,
-      "--silent",
-      "--output-dataset",
-      "--input-file",
-      inputPath,
+      "sh",
+      "-lc",
+      [
+        "set -eu",
+        `apify call ${JSON.stringify(input.apifyActor)} --silent --output-dataset --input-file ${JSON.stringify(inputPath)} > ${JSON.stringify(outputPath)}`,
+      ].join("; "),
     ]);
     if (result.exitCode !== 0) {
       throw new Error(`apify call failed (exit ${result.exitCode}): ${result.stderrText.trim()}`);
     }
 
+    const outputFile = Bun.file(outputPath);
+    if (!(await outputFile.exists())) {
+      throw new Error("apify output file missing");
+    }
+
     let items: RedditRecord[];
     try {
-      const parsed = JSON.parse(result.stdoutText);
+      const parsed = JSON.parse(await outputFile.text());
       if (!Array.isArray(parsed)) {
         throw new Error("dataset output is not an array");
       }
@@ -236,5 +241,6 @@ export async function fetchRedditPostMarkdown(input: {
     };
   } finally {
     await Bun.$`rm -f ${inputPath}`.quiet();
+    await Bun.$`rm -f ${outputPath}`.quiet();
   }
 }

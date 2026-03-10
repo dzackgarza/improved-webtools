@@ -382,11 +382,22 @@ describe("searxng-search plugin", () => {
     const apifyDataset = fixtureJson<Array<Record<string, unknown>>>(
       "reddit/apify-search-openai.json",
     );
+    const fixtureRaw = JSON.stringify(apifyDataset);
 
     (Bun as any).spawn = (args: string[]) => {
-      if (args[0] === "apify" && args[1] === "call") {
+      if (
+        args[0] === "sh" &&
+        args[1] === "-lc" &&
+        typeof args[2] === "string" &&
+        args[2].includes("apify call")
+      ) {
+        const outputPath = args[2].match(/>\s*"([^"]+)"$/)?.[1];
+        if (outputPath) {
+          mkdirSync(dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, fixtureRaw);
+        }
         return {
-          stdout: streamFromText(JSON.stringify(apifyDataset)),
+          stdout: streamFromText(fixtureRaw.slice(0, 128)),
           stderr: streamFromText(""),
           exited: Promise.resolve(0),
         };

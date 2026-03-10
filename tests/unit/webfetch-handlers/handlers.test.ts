@@ -128,7 +128,7 @@ describe("webfetch handler modules", () => {
     }
   });
 
-  it("renders reddit post/comment markdown from real apify dataset fixture", async () => {
+  it("renders reddit post/comment markdown from temp-file apify dataset output", async () => {
     const fixture = fixtureJson<Array<Record<string, unknown>>>("reddit/apify-search-openai.json");
     const fixtureRaw = JSON.stringify(fixture);
 
@@ -140,7 +140,17 @@ describe("webfetch handler modules", () => {
     const output = await fetchRedditPostMarkdown({
       url: new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/"),
       apifyActor: "mock/actor",
-      runCommand: async () => ({ stdoutText: fixtureRaw, stderrText: "", exitCode: 0 }),
+      runCommand: async (args) => {
+        expect(args[0]).toBe("sh");
+        expect(args[1]).toBe("-lc");
+        const script = args[2];
+        expect(typeof script).toBe("string");
+        const outputPath = typeof script === "string" ? script.match(/>\s*"([^"]+)"$/)?.[1] : undefined;
+        expect(outputPath).toBeDefined();
+        mkdirSync(dirname(outputPath!), { recursive: true });
+        writeFileSync(outputPath!, fixtureRaw);
+        return { stdoutText: fixtureRaw.slice(0, 128), stderrText: "", exitCode: 0 };
+      },
       fetchFallbackWithW3M: async () => ({ stdoutText: "unexpected fallback", stderrText: "", exitCode: 0 }),
     });
 
