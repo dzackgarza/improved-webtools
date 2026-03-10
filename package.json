@@ -1,5 +1,5 @@
 {
-  "name": "@dzackgarza/improved-webtools",
+  "name": "@dzackgarza/opencode-plugin-improved-webtools",
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit"
@@ -21,7 +21,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dzackgarza/improved-webtools.git"
+    "url": "git+https://github.com/dzackgarza/opencode-plugin-improved-webtools.git"
   },
   "keywords": [
     "opencode",

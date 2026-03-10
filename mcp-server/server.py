@@ -5,7 +5,7 @@ This server imports the existing TypeScript plugin tools and exposes them
 via the Model Context Protocol (MCP) without modifying any original code.
 
 Usage:
-    uv run fastmcp run server.py
+    uv run python server.py
 """
 
 import json

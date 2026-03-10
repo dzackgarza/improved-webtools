@@ -6,7 +6,7 @@
       "command": [
         "uvx",
         "--from",
-        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-webtools/mcp-server",
+        "git+https://github.com/dzackgarza/opencode-improved-webtools-plugin.git#subdirectory=mcp-server",
         "improved-webtools-mcp"
       ]
     }

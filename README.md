@@ -1,3 +1,5 @@
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
+
 
 # Improved Web Tools
 
@@ -24,6 +26,7 @@ Register the plugin in OpenCode via `file:`:
 ```
 
 Sample local configuration: [`improved-webtools/.config/opencode.json`](./.config/opencode.json)
+Sample local MCP configuration: [`improved-webtools/.config/opencode.mcp.json`](./.config/opencode.mcp.json)
 
 > [!WARNING]
 > Using `git+` with local git repositories (e.g., `git+file://`, local `git+ssh://`) is NOT supported and will not work. Always use the `file://` directive for local development.
@@ -55,7 +58,7 @@ Add the MCP server to your configuration:
       "command": [
         "uvx",
         "--from",
-        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-webtools/mcp-server",
+        "git+https://github.com/dzackgarza/opencode-improved-webtools-plugin.git#subdirectory=mcp-server",
         "improved-webtools-mcp"
       ]
     }
