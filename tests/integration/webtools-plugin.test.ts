@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { PASSPHRASE_WEBFETCH, PASSPHRASE_WEB_SEARCH } from "../../src/passphrases";
 
-const OPENCODE = "/home/dzack/.opencode/bin/opencode";
-const TOOL_DIR = "/home/dzack/opencode-plugins/improved-webtools";
+const OPENCODE = process.env.OPENCODE_BIN || "opencode";
+const TOOL_DIR = process.cwd();
 const DEFAULT_CONFIG = `${TOOL_DIR}/.config/opencode.json`;
 const DEBUG_CONFIG = `${TOOL_DIR}/.config/opencode.debug.json`;
 const MAX_BUFFER = 8 * 1024 * 1024;
@@ -129,7 +129,7 @@ describe("improved-webtools live e2e", () => {
 
   it("proves the reddit handler executes a fresh fetch and returns the expected metadata lines", () => {
     const events = runJson(
-      "Call the tool named webfetch with url=https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/ and cache_mode=refresh. Then reply with ONLY this exact format: Author: <author> | Comments extracted: <count>.",
+      "Call the tool named webfetch with url=https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/ and overwrite_cache=true. Then reply with ONLY this exact format: Author: <author> | Comments extracted: <count>.",
     );
     const toolUse = findCompletedToolUse(events, "webfetch");
     expect(toolUse.part.state.output).toContain("- Author: u/Thinklikeachef");

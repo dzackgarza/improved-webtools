@@ -37,16 +37,6 @@ type SearxngResponse = {
   unresponsive_engines: Array<[string, string]>;
 };
 
-type SearchQueryInput = {
-  q: string;
-  category?: string;
-  num_results?: number;
-  numResults?: number;
-  offset?: number;
-  recency?: number;
-  domains?: string[];
-};
-
 type WebFetchCacheMode = "default" | "refresh";
 
 const SEARXNG_INSTANCE_URL = (process.env.SEARXNG_INSTANCE_URL ?? "").trim();
@@ -152,18 +142,8 @@ function countTokens(text: string): number {
   return TOKEN_ENCODER.encode(text).length;
 }
 
-function resolveWebFetchCacheMode(cacheMode?: string): { value: WebFetchCacheMode; error?: string } {
-  const normalized = (cacheMode ?? "default").trim().toLowerCase();
-  if (normalized === "default" || normalized.length === 0) {
-    return { value: "default" };
-  }
-  if (normalized === "refresh") {
-    return { value: "refresh" };
-  }
-  return {
-    value: "default",
-    error: `Invalid cache mode: ${JSON.stringify(cacheMode)}. Supported values are "default" and "refresh".`,
-  };
+function resolveWebFetchCacheMode(overwriteCache?: boolean): { value: WebFetchCacheMode } {
+  return { value: overwriteCache ? "refresh" : "default" };
 }
 
 type WebFetchCachePayload = {
@@ -187,10 +167,10 @@ function webFetchCachePath(url: string): string {
 
 async function readWebFetchCache(
   url: string,
-  cacheMode: WebFetchCacheMode,
+  overwriteCache: WebFetchCacheMode,
 ): Promise<WebFetchHandlerResult | undefined> {
   if (!WEBFETCH_CACHE_ENABLED) return undefined;
-  if (cacheMode === "refresh") return undefined;
+  if (overwriteCache === "refresh") return undefined;
   const path = webFetchCachePath(url);
   const file = Bun.file(path);
   if (!(await file.exists())) return undefined;
@@ -665,25 +645,10 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     args: {
       query: tool.schema.string(),
       category: tool.schema.string().optional(),
-      numResults: tool.schema.number().optional(),
       num_results: tool.schema.number().optional(),
       offset: tool.schema.number().optional(),
       recency: tool.schema.number().optional(),
       domains: tool.schema.array(tool.schema.string()).optional(),
-      search_query: tool.schema
-        .array(
-          tool.schema.object({
-            q: tool.schema.string(),
-            category: tool.schema.string().optional(),
-            num_results: tool.schema.number().optional(),
-            numResults: tool.schema.number().optional(),
-            offset: tool.schema.number().optional(),
-            recency: tool.schema.number().optional(),
-            domains: tool.schema.array(tool.schema.string()).optional(),
-          }),
-        )
-        .min(1)
-        .optional(),
     },
     async execute(args, context) {
       const baseUrl = SEARXNG_INSTANCE_URL;
@@ -695,206 +660,168 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         ].join("\n");
       }
 
-      const rawQueries = args.search_query as SearchQueryInput[] | undefined;
-      const queries: SearchQueryInput[] =
-        rawQueries && rawQueries.length > 0
-          ? rawQueries
-          : [
-              {
-                q: args.query,
-                category: args.category,
-                num_results: args.num_results,
-                numResults: args.numResults,
-                offset: args.offset,
-                recency: args.recency,
-                domains: args.domains,
-              },
-            ];
-      const firstQuery = queries[0]?.q?.trim() ?? "";
-      if (!firstQuery) {
+      const query = args.query.trim();
+      if (!query) {
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
           ISSUE_REPORTING_HINT,
-          "Invalid search_query: first query is empty.",
+          "Invalid search: query is empty.",
         ].join("\n");
       }
 
       await context.ask({
         permission: WEBSEARCH_TOOL_ID,
-        patterns: queries.map((item) => item.q.trim()).filter(Boolean),
+        patterns: [query],
         always: ["*"],
         metadata: {
-          query: firstQuery,
-          queryCount: queries.length,
+          query,
         },
       });
 
-      const firstLimit = parseLimit(
-        queries[0]?.numResults ?? queries[0]?.num_results ?? args.numResults ?? args.num_results,
-      );
+      const limit = parseLimit(args.num_results);
 
       context.metadata({
-        title: `Web search: ${firstQuery.slice(0, 72)}`,
+        title: `Web search: ${query.slice(0, 72)}`,
         metadata: {
-          numResults: firstLimit,
-          queryCount: queries.length,
+          num_results: limit,
         },
       });
 
       const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
       const signal = AbortSignal.any([context.abort, timeoutSignal]);
 
-      const blocks: string[] = [];
+      const domains = (args.domains ?? [])
+        .map((domain) => domain.trim())
+        .filter(Boolean);
 
-      for (const [index, input] of queries.entries()) {
-        const query = input.q.trim();
-        if (!query) {
-          blocks.push(`Query ${index + 1}: invalid empty query.`);
-          continue;
-        }
-
-        const domains = (input.domains ?? [])
-          .map((domain) => domain.trim())
-          .filter(Boolean);
-
-        const category = resolveCategory(input.category);
-        if (category.error) {
-          blocks.push(`Query ${index + 1}: ${category.error}`);
-          continue;
-        }
-
-        const offset = resolveOffset(input.offset);
-        if (offset.error) {
-          blocks.push(`Query ${index + 1}: ${offset.error}`);
-          continue;
-        }
-        const limit = parseLimit(input.numResults ?? input.num_results);
-
-        let effectiveQuery = augmentQueryWithDomains(query, domains);
-        if (category.bang) {
-          effectiveQuery = `${category.bang} ${effectiveQuery}`;
-        }
-
-        try {
-          const timeRange = mapRecencyToTimeRange(input.recency);
-          const neededCount = offset.value + limit;
-          const collected: SearxngResult[] = [];
-          let firstResponse: SearxngResponse | undefined;
-
-          for (
-            let page = 1;
-            page <= MAX_PAGE_FETCHES && collected.length < neededCount;
-            page += 1
-          ) {
-            const url = buildQueryUrl(baseUrl, {
-              query: effectiveQuery,
-              timeRange,
-              pageNumber: page,
-            });
-            const response = await fetch(url, {
-              method: "GET",
-              headers: {
-                accept: "application/json",
-              },
-              signal,
-            });
-
-            if (!response.ok) {
-              const body = await response.text();
-              await client.app.log({
-                body: {
-                  service: "web-search-plugin",
-                  level: "error",
-                  message: `web_search request failed: HTTP ${response.status} ${response.statusText}`,
-                  extra: {
-                    queryIndex: index + 1,
-                    query,
-                    category: input.category ?? null,
-                    offset: offset.value,
-                    numResults: limit,
-                    status: response.status,
-                    statusText: response.statusText,
-                    responseBody: clampSnippet(body, 2000),
-                  },
-                },
-              });
-              blocks.push(
-                [
-                  `Query ${index + 1}: search request failed (HTTP ${response.status}).`,
-                  "If this persists, ask the user to check search backend/plugin logs and file details in ISSUES.md.",
-                ]
-                  .filter(Boolean)
-                  .join("\n"),
-              );
-              firstResponse = undefined;
-              break;
-            }
-
-            const pageData = asResponse(await response.json());
-            if (!firstResponse) {
-              firstResponse = pageData;
-            }
-
-            const pageResults = pageData.results;
-            if (pageResults.length === 0) {
-              break;
-            }
-            collected.push(...pageResults);
-          }
-
-          if (!firstResponse) {
-            continue;
-          }
-
-          const windowedResults = collected.slice(offset.value, offset.value + limit);
-          const data: SearxngResponse = {
-            ...firstResponse,
-            results: windowedResults,
-          };
-          blocks.push(
-            [
-              `Query ${index + 1}:`,
-              formatResults({
-                query,
-                category: input.category,
-                response: data,
-                offset: offset.value,
-                limit,
-              }),
-            ].join("\n"),
-          );
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          await client.app.log({
-            body: {
-              service: "web-search-plugin",
-              level: "error",
-              message: "web_search execution error",
-              extra: {
-                queryIndex: index + 1,
-                query,
-                category: input.category ?? null,
-                offset: offset.value,
-                numResults: limit,
-                error: message,
-              },
-            },
-          });
-          blocks.push(
-            [
-              `Query ${index + 1}: search request failed.`,
-              "If this persists, ask the user to check search backend/plugin logs and file details in ISSUES.md.",
-            ].join("\n"),
-          );
-        }
+      const category = resolveCategory(args.category);
+      if (category.error) {
+        return [
+          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
+          ISSUE_REPORTING_HINT,
+          category.error,
+        ].join("\n");
       }
 
-      return [
-        `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-        ISSUE_REPORTING_HINT,
-        "",
-        blocks.join("\n\n---\n\n"),
-      ].join("\n");
+      const offset = resolveOffset(args.offset);
+      if (offset.error) {
+        return [
+          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
+          ISSUE_REPORTING_HINT,
+          offset.error,
+        ].join("\n");
+      }
+
+      let effectiveQuery = augmentQueryWithDomains(query, domains);
+      if (category.bang) {
+        effectiveQuery = `${category.bang} ${effectiveQuery}`;
+      }
+
+      try {
+        const timeRange = mapRecencyToTimeRange(args.recency);
+        const neededCount = offset.value + limit;
+        const collected: SearxngResult[] = [];
+        let firstResponse: SearxngResponse | undefined;
+
+        for (
+          let page = 1;
+          page <= MAX_PAGE_FETCHES && collected.length < neededCount;
+          page += 1
+        ) {
+          const url = buildQueryUrl(baseUrl, {
+            query: effectiveQuery,
+            timeRange,
+            pageNumber: page,
+          });
+          const response = await fetch(url, {
+            method: "GET",
+            headers: {
+              accept: "application/json",
+            },
+            signal,
+          });
+
+          if (!response.ok) {
+            const body = await response.text();
+            await client.app.log({
+              body: {
+                service: "web-search-plugin",
+                level: "error",
+                message: `web_search request failed: HTTP ${response.status} ${response.statusText}`,
+                extra: {
+                  query,
+                  category: args.category ?? null,
+                  offset: offset.value,
+                  num_results: limit,
+                  status: response.status,
+                  statusText: response.statusText,
+                  responseBody: clampSnippet(body, 2000),
+                },
+              },
+            });
+            throw new Error(`search request failed (HTTP ${response.status})`);
+          }
+
+          const pageData = asResponse(await response.json());
+          if (!firstResponse) {
+            firstResponse = pageData;
+          }
+
+          const pageResults = pageData.results;
+          if (pageResults.length === 0) {
+            break;
+          }
+          collected.push(...pageResults);
+        }
+
+        if (!firstResponse) {
+          return [
+            `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
+            ISSUE_REPORTING_HINT,
+            "No results found.",
+          ].join("\n");
+        }
+
+        const windowedResults = collected.slice(offset.value, offset.value + limit);
+        const data: SearxngResponse = {
+          ...firstResponse,
+          results: windowedResults,
+        };
+
+        return [
+          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
+          ISSUE_REPORTING_HINT,
+          "",
+          formatResults({
+            query,
+            category: args.category,
+            response: data,
+            offset: offset.value,
+            limit,
+          }),
+        ].join("\n");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await client.app.log({
+          body: {
+            service: "web-search-plugin",
+            level: "error",
+            message: "web_search execution error",
+            extra: {
+              query,
+              category: args.category ?? null,
+              offset: offset.value,
+              num_results: limit,
+              error: message,
+            },
+          },
+        });
+        return [
+          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
+          ISSUE_REPORTING_HINT,
+          `Search failed: ${message}`,
+        ].join("\n");
+      }
     },
   });
 
@@ -904,9 +831,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         description: WEBFETCH_DESCRIPTION,
         args: {
           url: tool.schema.string(),
-          prompt: tool.schema.string().optional(),
-          cacheMode: tool.schema.string().optional(),
-          cache_mode: tool.schema.string().optional(),
+          overwrite_cache: tool.schema.boolean().optional(),
         },
         async execute(args, context) {
           const rawUrl = args.url.trim();
@@ -943,14 +868,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
           });
 
           try {
-            const resolvedCacheMode = resolveWebFetchCacheMode(args.cacheMode ?? args.cache_mode);
-            if (resolvedCacheMode.error) {
-              return [
-                `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
-                ISSUE_REPORTING_HINT,
-                resolvedCacheMode.error,
-              ].join("\n");
-            }
+            const resolvedCacheMode = resolveWebFetchCacheMode(args.overwrite_cache);
             const cacheKey = parsed.toString();
             const useArxivLibrary = isArxivLibraryUrl(parsed);
             const cached = useArxivLibrary
@@ -965,7 +883,10 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
             }
             const handler = findWebFetchHandler(webFetchDomainHandlers, parsed);
             const fetched = useArxivLibrary
-              ? await fetchArxivLibraryContent({ url: parsed, cacheMode: resolvedCacheMode.value })
+              ? await fetchArxivLibraryContent({
+                  url: parsed,
+                  overwriteCache: resolvedCacheMode.value === "refresh",
+                })
               : handler
                 ? await handler.handle({ url: parsed })
               : await (async () => {

@@ -43,7 +43,7 @@ type FetchArxivLibraryContentInput = {
   fetchImpl?: FetchImpl;
   runCommand?: RunCommand;
   now?: Date;
-  cacheMode?: "default" | "refresh";
+  overwriteCache?: boolean;
 };
 
 type ArxivLibraryStatus = "built" | "hit" | "refreshed";
@@ -505,13 +505,13 @@ async function ensureArxivArtifacts(input: {
   fetchImpl: FetchImpl;
   runCommand: RunCommand;
   now: Date;
-  cacheMode: "default" | "refresh";
+  overwriteCache: boolean;
 }): Promise<{
   cacheStatus: ArxivLibraryStatus;
   record: ArxivStoredRecord;
 }> {
-  const { arxivId, artifacts, fetchImpl, runCommand, now, cacheMode } = input;
-  if (cacheMode === "refresh") {
+  const { arxivId, artifacts, fetchImpl, runCommand, now, overwriteCache } = input;
+  if (overwriteCache) {
     await rm(artifacts.paperDir, { recursive: true, force: true });
   }
   await ensureDir(artifacts.paperDir);
@@ -521,7 +521,7 @@ async function ensureArxivArtifacts(input: {
     (await fileExists(artifacts.summaryPath)) &&
     (await fileExists(artifacts.pdfPath));
 
-  if (alreadyCached && cacheMode !== "refresh") {
+  if (alreadyCached && !overwriteCache) {
     await updateYamlTimestamp(artifacts.metadataPath, "last_accessed_at", now.toISOString());
     const record = parseStoredArxivRecord(arxivId, await readMaybe(artifacts.metadataPath));
     return {
@@ -580,7 +580,7 @@ async function ensureArxivArtifacts(input: {
       artifacts,
       pdfSizeBytes: pdfBytes.byteLength,
       sourceSizeBytes: sourceBytes.byteLength,
-      cacheStatus: cacheMode === "refresh" ? "refreshed" : "built",
+      cacheStatus: overwriteCache ? "refreshed" : "built",
       processedAt: now.toISOString(),
       lastAccessedAt: now.toISOString(),
       processingNotes,
@@ -593,7 +593,7 @@ async function ensureArxivArtifacts(input: {
     buildSummaryMarkdown({
       metadata,
       artifacts,
-      cacheStatus: cacheMode === "refresh" ? "refreshed" : "built",
+      cacheStatus: overwriteCache ? "refreshed" : "built",
       lastAccessedAt: now.toISOString(),
       markdownPath,
       htmlPath,
@@ -601,7 +601,7 @@ async function ensureArxivArtifacts(input: {
   );
 
   return {
-    cacheStatus: cacheMode === "refresh" ? "refreshed" : "built",
+    cacheStatus: overwriteCache ? "refreshed" : "built",
     record: {
       metadata,
       markdownPath,
@@ -673,7 +673,7 @@ export async function fetchArxivLibraryContent(
     fetchImpl: input.fetchImpl ?? fetch,
     runCommand,
     now,
-    cacheMode: input.cacheMode ?? "default",
+    overwriteCache: !!input.overwriteCache,
   });
 
   return {

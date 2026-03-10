@@ -1,4 +1,3 @@
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
 
 # Improved Web Tools MCP Server
 
@@ -9,7 +8,7 @@ FastMCP wrapper providing `webfetch` and `websearch` capabilities.
 Set up the environment and install dependencies:
 
 ```bash
-cd /home/dzack/opencode-plugins/improved-webtools/mcp-server
+cd ./improved-webtools/mcp-server
 uv sync --dev
 ```
 

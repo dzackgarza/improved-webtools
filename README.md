@@ -9,7 +9,7 @@ includes a FastMCP wrapper for the same logic.
 Install dependencies and set up the project:
 
 ```bash
-cd /home/dzack/opencode-plugins/improved-webtools
+cd ./improved-webtools
 just install
 ```
 
@@ -18,7 +18,7 @@ Register the plugin in OpenCode via `file:`:
 ```json
 {
   "plugin": [
-    "file:///home/dzack/opencode-plugins/improved-webtools/src/index.ts"
+    "file:///path/to/improved-webtools/src/index.ts"
   ]
 }
 ```
@@ -83,13 +83,12 @@ Reads a webpage URL as plain text content. In debug mode the same behavior is ex
 **Parameters:**
 
 - `url`: (string) The URL to fetch.
-- `prompt?`: (string) Optional prompt for extraction.
-- `cacheMode?`: `"default" | "refresh"` - Use `"refresh"` to bypass cached results and force a fresh fetch.
+- `overwrite_cache?`: (boolean) Set to `true` to bypass cached results and force a fresh fetch.
 
 **Special Handling:**
 
 - **ArXiv**: Routes `arxiv.org` URLs through a local artifact library. The library stores PDFs, source archives, BibTeX, and markdown conversions.
-- **Cache**: `cacheMode: "refresh"` rebuilds local artifact directories for ArXiv URLs.
+- **Cache**: `overwrite_cache: true` rebuilds local artifact directories for ArXiv URLs.
 
 **Environment Variables:**
 
@@ -98,7 +97,7 @@ Reads a webpage URL as plain text content. In debug mode the same behavior is ex
 ### `websearch`
 
 Searches the web with optional category narrowing (e.g., news, npm, pypi, gh, science).
-Supports pagination via `offset` and `numResults`. In debug mode the same behavior is
+Supports pagination via `offset` and `num_results`. In debug mode the same behavior is
 exposed as `websearch_debug`.
 
 ## Dependencies

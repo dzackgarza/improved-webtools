@@ -522,7 +522,7 @@ describe("webfetch handler modules", () => {
         fetchImpl,
         runCommand,
         now: new Date("2026-03-11T00:00:00Z"),
-        cacheMode: "refresh",
+        overwriteCache: true,
       });
 
       expect(refreshed.content).toContain("Local arXiv library status: refreshed");
