@@ -92,7 +92,10 @@ Reads a webpage URL as plain text content. In debug mode the same behavior is ex
 
 **Environment Variables:**
 
-- `WEBFETCH_ARXIV_LIBRARY_DIR`: Overrides the default artifact root (`~/.cache/opencode-arxiv-library`).
+- `WEBFETCH_ARXIV_LIBRARY_DIR`: Overrides the default artifact root at `~/.cache/opencode-arxiv-library`
+- `REDDIT_APIFY_ACTOR`: Optionally overrides the Reddit actor used for live verification and handler calls
+- `YTDLP_COOKIES_FILE`: Optionally points at a Netscape-format cookie jar for `yt-dlp` when YouTube bot-checks gate spoken/informational videos
+- `YOUTUBE_VERIFY_TIMEOUT_MS`: Optionally increases the per-command timeout used by `just youtube-live-verify` on slow CPU hosts during Whisper transcription
 
 ### `websearch`
 
@@ -115,4 +118,10 @@ Run checks and tests:
 just typecheck
 just test
 just mcp-test
+just reddit-live-verify
+YTDLP_COOKIES_FILE=/abs/path/to/youtube.cookies just youtube-live-verify
 ```
+
+`just reddit-live-verify` runs the live Reddit handler against the configured Apify actor and proves the nested-comment render path without making the default Bun suite depend on live Apify access.
+
+`just youtube-live-verify` preflights `uvx`, `yt-dlp` via `uvx`, and `openai-whisper` via `uvx` before running a caption-backed TED proof, a no-subtitles Whisper proof, and an invalid-video failure check. On CPU-only hosts, the Whisper leg can take several minutes; set `YOUTUBE_VERIFY_TIMEOUT_MS` higher if it times out before transcription completes.
