@@ -28,6 +28,9 @@ Do not treat the debug aliases as normal product behavior.
 | **Web Fetch** | `webfetch` | `webfetch_debug` |
 | **Web Search** | `websearch` | `websearch_debug` |
 
+### Local git+ transport
+Using `git+` with local git repos (e.g., `git+file://`, local `git+ssh://`) was never an intended route and DOES NOT WORK. Never even try it; it is totally irrelevant when the `file://` directive exists for local development.
+
 ### Test Order
 When debugging loading or shadowing, use this order:
 1. Prove the plugin loads in debug mode via `file://`

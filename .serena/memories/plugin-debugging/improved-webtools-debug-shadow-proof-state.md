@@ -1,0 +1,12 @@
+# improved-webtools debug/shadow proof state
+- Trigger: When debugging whether improved-webtools shadowing failures are in local plugin code, the OpenCode bridge, or the plugin transport path.
+- Rule: Keep debug mode and real shadow mode conceptually separate. The current working tree uses `IMPROVED_WEBTOOLS_DEBUG_MODE=1` to export non-shadowing aliases (`webfetch_debug`, `websearch_debug`) and defaults to real shadowing ids (`webfetch`, `websearch`). Prove `file://` against the working tree first, then prove `git+https` only against a published git ref.
+- Verify:
+  - Working tree + `file://` was proven on 2026-03-10 from `/tmp` with `OPENCODE_DISABLE_PROJECT_CONFIG=1` and raw `--format json` events. `webfetch_debug` in debug mode produced a real `tool_use` with `tool:"webfetch_debug"`, input `{"url":"https://example.com"}`, and output containing `PASS_WEBFETCH_SHADOW_20260305_C3D2`. Default shadow mode produced a real `tool_use` with `tool:"webfetch"` and the same passphrase-bearing output.
+  - Published git ref was proven on 2026-03-10 with `@dzackgarza/improved-webtools@git+https://github.com/dzackgarza/opencode-improved-webtools-plugin.git#feat/arxiv-local-library`. Bun installed it successfully, and an isolated OpenCode run produced a real `tool_use` for `webfetch` with the same passphrase-bearing output (`PASS_WEBFETCH_SHADOW_20260305_C3D2`).
+- Limitation:
+  - The `git+https` transport does not correctly propagate the `IMPROVED_WEBTOOLS_DEBUG_MODE=1` environment variable to the plugin runtime, so the `webfetch_debug` split cannot be triggered over remote transport.
+  - Verification of the "new split" is therefore currently limited to `file://` loading.
+  - **CRITICAL**: Using `git+` with local git repos (e.g., `git+file://`, local `git+ssh://`) was never an intended route and DOES NOT WORK. Never even try it; it is totally irrelevant when the `file://` directive exists for local development.
+- Scope: environment
+- Sources: `/home/dzack/opencode-plugins/improved-webtools/src/index.ts`, `/home/dzack/opencode-plugins/improved-webtools/.config/opencode.debug.json`, raw OpenCode runs from `/tmp/improved-webtools-gitverify-final.8aTfEe` and `/tmp/improved-webtools-gitcheck.TG8OJh`.

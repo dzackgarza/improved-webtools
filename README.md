@@ -25,6 +25,9 @@ Register the plugin in OpenCode via `file:`:
 
 Sample local configuration: [`improved-webtools/.config/opencode.json`](./.config/opencode.json)
 
+> [!WARNING]
+> Using `git+` with local git repositories (e.g., `git+file://`, local `git+ssh://`) is NOT supported and will not work. Always use the `file://` directive for local development.
+
 Default local mode is the real shadowing path:
 - `webfetch`
 - `websearch`

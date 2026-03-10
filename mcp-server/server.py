@@ -69,7 +69,7 @@ async def webfetch(
     url: Annotated[str, Field(description="URL to fetch (http/https only)")],
     ctx: Optional[Context] = None,
 ) -> str:
-    """Fetch URL content as plain text. Handles GitHub, Reddit, YouTube, Wikipedia, arXiv."""
+    """Use when you need to fetch a webpage URL as plain text. Handles GitHub, Reddit, YouTube, Wikipedia, and arXiv."""
     try:
         result = _run_tool("webfetch", {"url": url})
         return result
@@ -103,7 +103,7 @@ async def websearch(
     ] = 0,
     ctx: Optional[Context] = None,
 ) -> str:
-    """Search web via SearxNG. Returns snippets with pagination support."""
+    """Use when you need to search the web via SearxNG. Returns snippets with pagination support."""
     try:
         args: dict = {
             "query": query,
