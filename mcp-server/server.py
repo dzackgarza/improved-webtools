@@ -28,7 +28,7 @@ mcp = FastMCP(
 # Resolve paths
 SERVER_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SERVER_DIR.parent
-MCP_SHIM = PROJECT_ROOT.parent / "mcp-shim" / "run-tool.ts"
+MCP_SHIM = PROJECT_ROOT.parent / "opencode-plugin-mcp-shim" / "run-tool.ts"
 PLUGIN_ENTRY = PROJECT_ROOT / "src" / "index.ts"
 
 

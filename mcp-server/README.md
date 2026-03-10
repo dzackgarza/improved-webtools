@@ -58,4 +58,4 @@ Searches the web using specific query parameters.
 - `offset?`: (number) Result pagination offset.
 - `recency?`: (number) Filter by recency.
 
-The server delegates tool execution to the TypeScript plugin through `mcp-shim/run-tool.ts`.
+The server delegates tool execution to the TypeScript plugin through `opencode-plugin-mcp-shim/run-tool.ts`.
