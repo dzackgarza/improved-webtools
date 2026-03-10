@@ -9,7 +9,10 @@ Usage:
 """
 
 import json
+import os
 import subprocess
+import sys
+import urllib.request
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -121,6 +124,29 @@ async def websearch(
 
 
 def main() -> None:
+    # 1. Check Env Var
+    url = os.environ.get("SEARXNG_INSTANCE_URL")
+    if not url:
+        print(
+            "CRITICAL: SEARXNG_INSTANCE_URL is not set. MCP server cannot start.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # 2. Blocking Health Check
+    try:
+        # Using a blocking request to ensure the instance is reachable
+        # 5s timeout is sufficient for a local/known instance check
+        with urllib.request.urlopen(url, timeout=5) as response:
+            if response.getcode() != 200:
+                raise Exception(f"HTTP {response.getcode()}")
+    except Exception as e:
+        print(
+            f"CRITICAL: SearxNG instance at {url} is unreachable: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     mcp.run()
 
 
