@@ -67,11 +67,17 @@ def _run_tool(tool_name: str, args: dict) -> str:
 )
 async def webfetch(
     url: Annotated[str, Field(description="URL to fetch (http/https only)")],
+    overwrite_cache: Annotated[
+        bool, Field(description="Set to true to bypass cached results")
+    ] = False,
     ctx: Optional[Context] = None,
 ) -> str:
     """Use when you need to fetch a webpage URL as plain text. Handles GitHub, Reddit, YouTube, Wikipedia, and arXiv."""
     try:
-        result = _run_tool("webfetch", {"url": url})
+        args = {"url": url}
+        if overwrite_cache:
+            args["overwrite_cache"] = True
+        result = _run_tool("webfetch", args)
         return result
     except subprocess.TimeoutExpired:
         return f"Error: webfetch timeout (>30s) for URL: {url}"
@@ -101,6 +107,9 @@ async def websearch(
     recency: Annotated[
         int, Field(description="Recency in days (1=day, 31=month, 365=year)")
     ] = 0,
+    domains: Annotated[
+        Optional[list[str]], Field(description="Specific domains to limit search to")
+    ] = None,
     ctx: Optional[Context] = None,
 ) -> str:
     """Use when you need to search the web via SearxNG. Returns snippets with pagination support."""
@@ -114,6 +123,8 @@ async def websearch(
             args["category"] = category
         if recency:
             args["recency"] = recency
+        if domains:
+            args["domains"] = domains
 
         result = _run_tool("websearch", args)
         return result
