@@ -1,6 +1,5 @@
 {
-  "name": "improved-webtools",
-  "private": true,
+  "name": "@dzackgarza/improved-webtools",
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit"
@@ -15,5 +14,18 @@
     "@opencode-ai/plugin": "^1.2.20",
     "js-tiktoken": "^1.0.21"
   },
-  "module": "./src/index.ts"
+  "module": "./src/index.ts",
+  "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dzackgarza/improved-webtools.git"
+  },
+  "keywords": [
+    "opencode",
+    "plugin"
+  ],
+  "funding": "https://ko-fi.com/I2I57UKJ8"
 }

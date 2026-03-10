@@ -7,16 +7,32 @@ This plugin exists for the **sole purpose** of shadowing and overriding the defa
 The intention of this plugin **IS TO SHADOW** the OpenCode built-ins. Any other behavior is a deviation from the core design.
 
 ### Target Built-ins
-The known OpenCode built-ins being shadowed are:
-- **`web_fetch`**: Fetches raw content from a URL.
-- **`web_search`**: Performs a general web search.
+In the current OpenCode build used in this workspace, the built-ins being shadowed are:
+- **`webfetch`**: Fetches raw content from a URL.
+- **`websearch`**: Performs a general web search.
 
-### Debugging and Non-Shadowing
-The **ONLY** reason non-shadowing names (`webfetch` and `websearch` without underscores) exist is to **DEBUG THE SHADOWING**. These names are not an intentional feature or an "alternative choice." They are strictly for development and diagnostic use to verify plugin logic without system-level interference.
+### Manual Debug Mode
+Debug mode is **off by default**. In normal operation the plugin exports the real shadowing tool ids:
+- **`webfetch`**
+- **`websearch`**
 
-| Feature | OpenCode Built-in (Shadow Target) | Current Plugin Tool (Debug Name) |
+When `IMPROVED_WEBTOOLS_DEBUG_MODE=1`, the plugin exports **non-shadowing debug aliases instead**:
+- **`webfetch_debug`**
+- **`websearch_debug`**
+
+Use `.config/opencode.debug.json` or an equivalent config that allows the debug tool ids.
+Do not treat the debug aliases as normal product behavior.
+
+| Feature | Normal shadowing id | Manual debug id |
 | :--- | :--- | :--- |
-| **Web Fetch** | `web_fetch` | `webfetch` |
-| **Web Search** | `web_search` | `websearch` |
+| **Web Fetch** | `webfetch` | `webfetch_debug` |
+| **Web Search** | `websearch` | `websearch_debug` |
+
+### Test Order
+When debugging loading or shadowing, use this order:
+1. Prove the plugin loads in debug mode via `file://`
+2. Prove the plugin shadows in normal mode via `file://`
+3. Prove the plugin loads in debug mode via `git+`
+4. Prove the plugin shadows in normal mode via `git+`
 
 **DO NOT** treat the non-shadowing names as standard tools. They are internal debug hooks only.

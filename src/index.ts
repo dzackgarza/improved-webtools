@@ -77,6 +77,24 @@ const WIKIPEDIA_API_USER_AGENT = (
 const WIKIPEDIA_CONVERTER_SCRIPT = decodeURIComponent(
   new URL("./scripts/wikipedia_html_to_markdown.py", import.meta.url).pathname,
 );
+const WEBFETCH_BASE_DESCRIPTION = "Use when you need to read a webpage URL as plain text content.";
+const WEBSEARCH_BASE_DESCRIPTION =
+  "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate.";
+
+function envFlagEnabled(value?: string): boolean {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+const IMPROVED_WEBTOOLS_DEBUG_MODE = envFlagEnabled(process.env.IMPROVED_WEBTOOLS_DEBUG_MODE);
+const WEBFETCH_TOOL_ID = IMPROVED_WEBTOOLS_DEBUG_MODE ? "webfetch_debug" : "webfetch";
+const WEBSEARCH_TOOL_ID = IMPROVED_WEBTOOLS_DEBUG_MODE ? "websearch_debug" : "websearch";
+const WEBFETCH_DESCRIPTION = IMPROVED_WEBTOOLS_DEBUG_MODE
+  ? "Use only when explicitly debugging improved-webtools loading without shadowing the built-in webfetch tool. This debug-mode alias behaves the same as webfetch."
+  : WEBFETCH_BASE_DESCRIPTION;
+const WEBSEARCH_DESCRIPTION = IMPROVED_WEBTOOLS_DEBUG_MODE
+  ? "Use only when explicitly debugging improved-webtools loading without shadowing the built-in websearch tool. This debug-mode alias behaves the same as websearch. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate."
+  : WEBSEARCH_BASE_DESCRIPTION;
 
 const NARROWING_CATEGORIES = [
   "news",
@@ -643,8 +661,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
   ];
 
   const websearchTool = tool({
-    description:
-      "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate.",
+    description: WEBSEARCH_DESCRIPTION,
     args: {
       query: tool.schema.string(),
       category: tool.schema.string().optional(),
@@ -703,7 +720,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       }
 
       await context.ask({
-        permission: "websearch",
+        permission: WEBSEARCH_TOOL_ID,
         patterns: queries.map((item) => item.q.trim()).filter(Boolean),
         always: ["*"],
         metadata: {
@@ -883,8 +900,8 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
 
   return {
     tool: {
-      webfetch: tool({
-        description: "Use when you need to read a webpage URL as plain text content.",
+      [WEBFETCH_TOOL_ID]: tool({
+        description: WEBFETCH_DESCRIPTION,
         args: {
           url: tool.schema.string(),
           prompt: tool.schema.string().optional(),
@@ -913,7 +930,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
           }
 
           await context.ask({
-            permission: "webfetch",
+            permission: WEBFETCH_TOOL_ID,
             patterns: [parsed.toString()],
             always: ["*"],
             metadata: {
@@ -1052,7 +1069,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         },
       }),
 
-      websearch: websearchTool,
+      [WEBSEARCH_TOOL_ID]: websearchTool,
     },
   };
 };

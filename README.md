@@ -1,8 +1,8 @@
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
 
 # Improved Web Tools
 
-OpenCode plugin that provides `webfetch` and `websearch` tools, including a FastMCP wrapper for the same logic.
+OpenCode plugin that shadows the built-in `webfetch` and `websearch` tools. It also
+includes a FastMCP wrapper for the same logic.
 
 ## Installation
 
@@ -24,6 +24,21 @@ Register the plugin in OpenCode via `file:`:
 ```
 
 Sample local configuration: [`improved-webtools/.config/opencode.json`](./.config/opencode.json)
+
+Default local mode is the real shadowing path:
+- `webfetch`
+- `websearch`
+
+Manual debug mode exports non-shadowing aliases instead:
+- `webfetch_debug`
+- `websearch_debug`
+
+To enable debug mode locally:
+
+```bash
+export IMPROVED_WEBTOOLS_DEBUG_MODE="1"
+export OPENCODE_CONFIG="$PWD/.config/opencode.debug.json"
+```
 
 ### MCP Installation
 
@@ -47,9 +62,20 @@ Add the MCP server to your configuration:
 
 ## Tools
 
+### Default tool ids
+
+- `webfetch`
+- `websearch`
+
+### Debug-only tool ids
+
+- `webfetch_debug`
+- `websearch_debug`
+
 ### `webfetch`
 
-Reads a webpage URL as plain text content.
+Reads a webpage URL as plain text content. In debug mode the same behavior is exposed as
+`webfetch_debug`.
 
 **Parameters:**
 
@@ -68,7 +94,9 @@ Reads a webpage URL as plain text content.
 
 ### `websearch`
 
-Searches the web with optional category narrowing (e.g., news, npm, pypi, gh, science). Supports pagination via `offset` and `numResults`.
+Searches the web with optional category narrowing (e.g., news, npm, pypi, gh, science).
+Supports pagination via `offset` and `numResults`. In debug mode the same behavior is
+exposed as `websearch_debug`.
 
 ## Dependencies
 
