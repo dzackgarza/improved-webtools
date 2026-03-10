@@ -1,21 +1,28 @@
-# improved-webtools MCP server
 
-FastMCP wrapper for `webfetch` and `websearch`.
+# Improved Web Tools MCP Server
 
-## Install
+FastMCP wrapper providing `webfetch` and `websearch` capabilities.
+
+## Installation
+
+Set up the environment and install dependencies:
 
 ```bash
-cd /home/dzack/opencode-plugins/improved-webtools/mcp-server
+cd ./improved-webtools/mcp-server
 uv sync --dev
 ```
 
-Local run:
+### Local Run
+
+Execute the MCP server locally:
 
 ```bash
 uv run improved-webtools-mcp
 ```
 
-Remote-style OpenCode config using `uvx` from GitHub:
+### Configuration
+
+Add the server to your OpenCode configuration:
 
 ```json
 {
@@ -37,18 +44,18 @@ Remote-style OpenCode config using `uvx` from GitHub:
 
 ### `webfetch`
 
-```text
-url: string
-```
+Fetches the text content of a URL.
+
+- `url`: (string) The target URL.
 
 ### `websearch`
 
-```text
-query: string
-category?: string
-num_results?: number
-offset?: number
-recency?: number
-```
+Searches the web using specific query parameters.
 
-The wrapper delegates to the TypeScript plugin through [`mcp-shim/run-tool.ts`](/home/dzack/opencode-plugins/mcp-shim/run-tool.ts).
+- `query`: (string) Search terms.
+- `category?`: (string) Narrow search to specific categories.
+- `num_results?`: (number) Number of results to return.
+- `offset?`: (number) Result pagination offset.
+- `recency?`: (number) Filter by recency.
+
+The server delegates tool execution to the TypeScript plugin through `opencode-plugin-mcp-shim/run-tool.ts`.

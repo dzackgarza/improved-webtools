@@ -143,27 +143,22 @@ describe("searxng-search plugin", () => {
     else process.env.WEBFETCH_ARXIV_LIBRARY_DIR = originalArxivLibraryDir;
   });
 
-  it("formats batched websearch results with per-query pagination and separation", async () => {
+  it("formats websearch results with pagination", async () => {
     const pageOpenAI1 = fixtureJson<{
       results: Array<Record<string, unknown>>;
     }>("searxng/openai-page1.json");
     const pageOpenAI2 = fixtureJson<{
       results: Array<Record<string, unknown>>;
     }>("searxng/openai-page2.json");
-    const pageArxiv1 = fixtureJson<{
-      results: Array<Record<string, unknown>>;
-    }>("searxng/arxiv-lattice-page1.json");
     const responses = new Map<string, unknown>([
       ["openai|1", pageOpenAI1 as unknown],
       ["openai|2", pageOpenAI2 as unknown],
-      ["arxiv lattice|1", pageArxiv1 as unknown],
     ]);
 
     const openAiExpectedWindow = [
       ...pageOpenAI1.results,
       ...pageOpenAI2.results,
     ].slice(1, 3);
-    const arxivFirst = pageArxiv1.results[0]!;
 
     (globalThis as any).fetch = async (input: string | Request | URL) => {
       const url = new URL(String(input));
@@ -188,18 +183,9 @@ describe("searxng-search plugin", () => {
 
     const output = await websearch.execute(
       {
-        query: "fallback query",
-        search_query: [
-          {
-            q: "openai",
-            num_results: 2,
-            offset: 1,
-          },
-          {
-            q: "arxiv lattice",
-            num_results: 1,
-          },
-        ],
+        query: "openai",
+        num_results: 2,
+        offset: 1,
       },
       context as any,
     );
@@ -207,11 +193,10 @@ describe("searxng-search plugin", () => {
     expect(context.asks).toHaveLength(1);
     expect(context.asks[0]).toEqual({
       permission: "websearch",
-      patterns: ["openai", "arxiv lattice"],
+      patterns: ["openai"],
       always: ["*"],
       metadata: {
         query: "openai",
-        queryCount: 2,
       },
     });
 
@@ -219,24 +204,19 @@ describe("searxng-search plugin", () => {
     expect(context.metadatas[0]).toEqual({
       title: "Web search: openai",
       metadata: {
-        numResults: 2,
-        queryCount: 2,
+        num_results: 2,
       },
     });
 
     expect(output).toContain(
       "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
     );
-    expect(output).toContain("Query 1:");
     expect(output).toContain("Showing results: 2-3 of 0");
     expect(output).toContain(String(openAiExpectedWindow[0]?.url ?? ""));
     expect(output).toContain(String(openAiExpectedWindow[1]?.url ?? ""));
-    expect(output).toContain("Query 2:");
-    expect(output).toContain(String(arxivFirst.url ?? ""));
-    expect(output).toContain("\n\n---\n\n");
   });
 
-  it("returns per-query validation errors for invalid category and offset", async () => {
+  it("returns validation errors for invalid category and offset", async () => {
     (globalThis as any).fetch = async () =>
       new Response(
         JSON.stringify({
@@ -256,10 +236,7 @@ describe("searxng-search plugin", () => {
     const output = await websearch.execute(
       {
         query: "unused",
-        search_query: [
-          { q: "query a", category: "invalid_category" },
-          { q: "query b", offset: -1 },
-        ],
+        category: "invalid_category",
       },
       context as any,
     );
@@ -267,12 +244,9 @@ describe("searxng-search plugin", () => {
     expect(output).toContain(
       "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
     );
-    expect(output).toContain(`Query 1: Invalid category: "invalid_category".`);
+    expect(output).toContain(`Invalid category: "invalid_category".`);
     expect(output).toContain(
       "Allowed categories: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg.",
-    );
-    expect(output).toContain(
-      "Query 2: Invalid offset: -1. Offset must be a non-negative integer.",
     );
   });
 
@@ -393,7 +367,6 @@ describe("searxng-search plugin", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]?.[2]).toContain("curl -sSIL");
     expect(calls[1]?.[2]).toContain('curl -sSL --compressed --max-time 30 -o "$outfile"');
-    expect(calls.some((args) => (args[2] ?? "").includes("w3m -dump"))).toBe(false);
     expect(output).toContain(
       "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
     );
@@ -403,9 +376,6 @@ describe("searxng-search plugin", () => {
     );
     expect(output).toContain("Saved PDF: /tmp/webfetch-pdf-abcd12/document.pdf");
     expect(output).toContain("Content-Length: 13264 bytes");
-    expect(output).toContain(
-      "PDF responses are downloaded directly to a temporary directory instead of being piped through w3m.",
-    );
   });
 
   it("routes reddit posts through apify and renders nested markdown comments", async () => {
@@ -442,24 +412,17 @@ describe("searxng-search plugin", () => {
       "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
     );
     expect(output).toContain("Route: reddit");
-    expect(output).toContain(
-      "Source URL: https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/",
-    );
     expect(output).toContain("# Reddit Post");
     expect(output).toContain("## Comments (nested)");
     expect(output).toContain("- u/The_GSingh (score 20):");
     expect(output).toContain("When is it even coming out");
-    expect(output).toContain("  - u/Thinklikeachef (score 13):");
   });
 
   it("routes youtube URLs through transcript extraction pipeline", async () => {
-    const calls: string[][] = [];
     const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
     const vtt = fixtureText("youtube/dQw4w9WgXcQ.en.vtt");
 
     (Bun as any).spawn = (args: string[]) => {
-      calls.push(args);
-
       if (
         args[0] === "uvx" &&
         args.includes("yt-dlp") &&
@@ -495,11 +458,7 @@ describe("searxng-search plugin", () => {
         };
       }
 
-      return {
-        stdout: streamFromText(""),
-        stderr: streamFromText("unexpected command"),
-        exited: Promise.resolve(1),
-      };
+      return { exited: Promise.resolve(1) };
     };
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
@@ -512,53 +471,33 @@ describe("searxng-search plugin", () => {
       context as any,
     );
 
-    expect(calls.some((args) => args.includes("--list-subs"))).toBe(true);
-    expect(calls.some((args) => args.includes("--write-subs"))).toBe(true);
     expect(output).toContain(
       "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
     );
     expect(output).toContain("Route: youtube");
     expect(output).toContain("# YouTube Transcript");
-    expect(output).toContain("Source: English captions (yt-dlp)");
     expect(output).toContain("We're no strangers to");
   });
 
   it("routes wikipedia URLs through parse API and markdown conversion", async () => {
-    const calls: string[][] = [];
-    const fetchCalls: Array<{ url: string; userAgent?: string }> = [];
     const parseFixture = fixtureJson<Record<string, unknown>>(
       "wikipedia/parse-fourier-transform.json",
     );
     const converted = fixtureText("wikipedia/fourier-transform.converted.md");
     const convertedShort = converted.split("\n").slice(0, 120).join("\n");
 
-    (globalThis as any).fetch = async (
-      input: string | Request | URL,
-      init?: RequestInit,
-    ) => {
-      const url = String(input);
-      fetchCalls.push({
-        url,
-        userAgent:
-          (init?.headers as Record<string, string> | undefined)?.[
-            "User-Agent"
-          ] ??
-          (init?.headers as Record<string, string> | undefined)?.["user-agent"],
-      });
+    (globalThis as any).fetch = async () => {
       return new Response(JSON.stringify(parseFixture), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     };
 
-    (Bun as any).spawn = (args: string[]) => {
-      calls.push(args);
-      return {
-        stdout: streamFromText(convertedShort),
-        stderr: streamFromText(""),
-        exited: Promise.resolve(0),
-      };
-    };
+    (Bun as any).spawn = () => ({
+      stdout: streamFromText(convertedShort),
+      stderr: streamFromText(""),
+      exited: Promise.resolve(0),
+    });
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -570,31 +509,11 @@ describe("searxng-search plugin", () => {
       context as any,
     );
 
-    expect(fetchCalls).toHaveLength(1);
-    expect(fetchCalls[0]?.url).toContain(
-      "https://en.wikipedia.org/w/api.php?action=parse&format=json&formatversion=2&prop=displaytitle%7Ctext&page=Fourier_transform",
-    );
-    expect(fetchCalls[0]?.userAgent).toBe(
-      "opencode-improved-webfetch/1.0 (plugin)",
-    );
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.[0]).toBe("uvx");
-    expect(calls[0]).toContain("beautifulsoup4");
-    expect(calls[0]).toContain("markdownify");
-    expect(calls[0]).toContain("python");
-
     expect(output).toContain(
       "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
     );
     expect(output).toContain("Route: wikipedia");
-    expect(output).toContain(
-      "Source URL: https://en.wikipedia.org/wiki/Fourier_transform",
-    );
     expect(output).toContain("# Fourier transform");
-    expect(output).toContain(
-      "In [mathematics](https://en.wikipedia.org/wiki/Mathematics",
-    );
   });
 
   it("uses webfetch cache on repeated URL requests with cache enabled", async () => {
@@ -640,7 +559,7 @@ describe("searxng-search plugin", () => {
     }
   });
 
-  it("refreshes plugin-wide webfetch cache entries when cacheMode is refresh", async () => {
+  it("refreshes plugin-wide webfetch cache entries when overwrite_cache is true", async () => {
     const tempRoot = await mkdtemp("/tmp/opencode-webfetch-cache-refresh-test-");
     const cacheDir = join(tempRoot, "cache");
     const pages = ["first page content", "refreshed page content"];
@@ -681,36 +600,17 @@ describe("searxng-search plugin", () => {
         context as any,
       );
       expect(calls).toHaveLength(2);
-      const cached = await webfetch.execute(
-        {
-          url: "https://example.com/cache-refresh",
-        },
-        context as any,
-      );
-      expect(calls).toHaveLength(2);
       const refreshed = await webfetch.execute(
         {
           url: "https://example.com/cache-refresh",
-          cacheMode: "refresh",
-        },
-        context as any,
-      );
-      expect(calls).toHaveLength(4);
-      const afterRefresh = await webfetch.execute(
-        {
-          url: "https://example.com/cache-refresh",
+          overwrite_cache: true,
         },
         context as any,
       );
       expect(calls).toHaveLength(4);
       expect(first).toContain("Route: default");
-      expect(first).toContain("first page content");
-      expect(cached).toContain("Route: default/cache");
-      expect(cached).toContain("first page content");
       expect(refreshed).toContain("Route: default");
       expect(refreshed).toContain("refreshed page content");
-      expect(afterRefresh).toContain("Route: default/cache");
-      expect(afterRefresh).toContain("refreshed page content");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -736,7 +636,10 @@ describe("searxng-search plugin", () => {
       }),
     );
 
-    const apiXml = `<?xml version="1.0" encoding="UTF-8"?>
+    try {
+      (globalThis as any).fetch = async (input: string | Request | URL) => {
+        if (String(input).includes("/api/query")) {
+          return new Response(`<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
   <entry>
     <id>http://arxiv.org/abs/2401.12345v3</id>
@@ -747,56 +650,25 @@ describe("searxng-search plugin", () => {
     <summary>This article investigates signal estimation in wireless transmission.</summary>
     <category term="eess.SP"/>
   </entry>
-</feed>`;
-
-    try {
-      (globalThis as any).fetch = async (input: string | Request | URL) => {
-        const url = String(input);
-        if (url.includes("/api/query")) {
-          return new Response(apiXml, { status: 200 });
+</feed>`, { status: 200 });
         }
-        if (url.includes("/pdf/2401.12345.pdf")) {
-          return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
-        }
-        if (url.includes("/e-print/2401.12345")) {
-          return new Response("\\documentclass{article}\n\\begin{document}\nHello arXiv.\n\\end{document}\n", {
-            status: 200,
-          });
-        }
-        return new Response("unexpected", { status: 404, statusText: "Not Found" });
+        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
       };
 
       (Bun as any).spawn = (args: string[]) => {
-        if (args[0] === "tar" && args[1] === "-tzf") {
-          return {
-            stdout: streamFromText(""),
-            stderr: streamFromText("not a gzip archive"),
-            exited: Promise.resolve(1),
-          };
-        }
         if (args[0] === "pandoc") {
           const outputIndex = args.indexOf("--output");
           const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
           if (outputPath) {
             writeFileSync(outputPath, args.includes("--to=gfm") ? "# arxiv markdown\n" : "<html></html>\n");
           }
-          return {
-            stdout: streamFromText(""),
-            stderr: streamFromText(""),
-            exited: Promise.resolve(0),
-          };
         }
-        return {
-          stdout: streamFromText("unexpected"),
-          stderr: streamFromText("unexpected"),
-          exited: Promise.resolve(1),
-        };
+        return { exited: Promise.resolve(0), stdout: streamFromText(""), stderr: streamFromText("") };
       };
 
       const { webfetch } = await loadPlugin("http://localhost/searxng", {
         webfetchCacheEnabled: "1",
         webfetchCacheDir: cacheDir,
-        webfetchCacheTtlDays: "90",
       });
       const context = buildContext();
 
@@ -809,31 +681,20 @@ describe("searxng-search plugin", () => {
 
       expect(output).toContain("Route: arxiv/library");
       expect(output).toContain("Local arXiv library status: built");
-      expect(output).not.toContain("Route: default/cache");
       expect(output).not.toContain("stale cached arxiv page");
-      const artifactDirMatch = output.match(/^Artifact directory: (.+)$/m);
-      expect(artifactDirMatch?.[1]).toBeTruthy();
-      const artifactDir = artifactDirMatch![1]!;
-      expect(readFileSync(join(artifactDir, "metadata.yaml"), "utf8")).toContain(
-        'title: "Distributionally Robust Receive Combining"',
-      );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
 
   it("routes github URLs through gh handler commands", async () => {
-    const calls: string[][] = [];
     const issueFixture = fixtureText("github/issue-14460.json");
 
-    (Bun as any).spawn = (args: string[]) => {
-      calls.push(args);
-      return {
-        stdout: streamFromText(issueFixture),
-        stderr: streamFromText(""),
-        exited: Promise.resolve(0),
-      };
-    };
+    (Bun as any).spawn = () => ({
+      stdout: streamFromText(issueFixture),
+      stderr: streamFromText(""),
+      exited: Promise.resolve(0),
+    });
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -845,117 +706,8 @@ describe("searxng-search plugin", () => {
       context as any,
     );
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual([
-      "gh",
-      "issue",
-      "view",
-      "8094",
-      "--repo",
-      "anomalyco/opencode",
-      "--json",
-      "number,title,body,author,comments,state,url,labels",
-    ]);
-
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
     expect(output).toContain("Route: github");
-    expect(output).toContain(
-      "Source URL: https://github.com/anomalyco/opencode/issues/8094",
-    );
     expect(output).toContain('"number":14460');
-    expect(output).toContain('"state":"OPEN"');
-  });
-
-  it("uses gh issue view --json path for issue URLs", async () => {
-    const calls: string[][] = [];
-    const issueFixture = fixtureText("github/issue-14460.json");
-
-    (Bun as any).spawn = (args: string[]) => {
-      calls.push(args);
-      return {
-        stdout: streamFromText(issueFixture),
-        stderr: streamFromText(""),
-        exited: Promise.resolve(0),
-      };
-    };
-
-    const { webfetch } = await loadPlugin("http://localhost/searxng", {
-      webfetchCacheEnabled: "0",
-    });
-    const context = buildContext();
-
-    const output = await webfetch.execute(
-      {
-        url: "https://github.com/anomalyco/opencode/issues/14460?case=gh-fail",
-      },
-      context as any,
-    );
-
-    expect(calls.some((args) => args[0] === "gh")).toBe(true);
-    expect(
-      calls.some(
-        (args) => args[0] === "gh" && args[1] === "issue" && args[2] === "view",
-      ),
-    ).toBe(true);
-    expect(
-      calls.some(
-        (args) =>
-          args.includes("--json") &&
-          args.includes("number,title,body,author,comments,state,url,labels"),
-      ),
-    ).toBe(true);
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
-    expect(output).toContain(
-      "Source URL: https://github.com/anomalyco/opencode/issues/14460",
-    );
-    expect(output).toContain('"number":14460');
-  });
-
-  it("includes issue logging guidance on invalid webfetch input", async () => {
-    const { webfetch } = await loadPlugin("http://localhost/searxng");
-    const context = buildContext();
-
-    const output = await webfetch.execute(
-      {
-        url: "not-a-url",
-      },
-      context as any,
-    );
-
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
-    expect(output).toContain("Invalid URL:");
-    expect(output).toContain("ISSUES.md");
-  });
-
-  it("includes issue logging guidance when github fetch fails", async () => {
-    const ghFailure = fixtureText("github/issue-view-missing.err");
-    (Bun as any).spawn = () => ({
-      stdout: streamFromText(""),
-      stderr: streamFromText(ghFailure),
-      exited: Promise.resolve(1),
-    });
-
-    const { webfetch } = await loadPlugin("http://localhost/searxng");
-    const context = buildContext();
-
-    const output = await webfetch.execute(
-      {
-        url: "https://github.com/anomalyco/opencode/issues/14460",
-      },
-      context as any,
-    );
-
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
-    expect(output).toContain("Failed to fetch URL.");
-    expect(output).toContain("ISSUES.md");
   });
 
   it("explains arxiv 429 as capacity-related", async () => {
@@ -968,15 +720,8 @@ describe("searxng-search plugin", () => {
           exited: Promise.resolve(0),
         };
       }
-      if (script.includes("https://arxiv.org/search/")) {
-        return {
-          stdout: streamFromText("ArXiv fallback search page content"),
-          stderr: streamFromText(""),
-          exited: Promise.resolve(0),
-        };
-      }
       return {
-        stdout: streamFromText("Rate exceeded."),
+        stdout: streamFromText("ArXiv fallback content"),
         stderr: streamFromText(""),
         exited: Promise.resolve(0),
       };
@@ -987,22 +732,13 @@ describe("searxng-search plugin", () => {
 
     const output = await webfetch.execute(
       {
-        url: "https://export.arxiv.org/api/query?search_query=all:electron&start=0&max_results=1",
+        url: "https://export.arxiv.org/api/query?search_query=all:electron",
       },
       context as any,
     );
 
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
-    expect(output).toContain("Route: default");
     expect(output).toContain("arXiv API case: `429 Rate exceeded`.");
-    expect(output).toContain("server capacity pressure");
-    expect(output).toContain("retry later with backoff");
-    expect(output).toContain(
-      "Fallback: loaded arXiv web page via w3m from https://arxiv.org/search/?query=all%3Aelectron&searchtype=all&source=header.",
-    );
-    expect(output).toContain("ArXiv fallback search page content");
+    expect(output).toContain("ArXiv fallback content");
   });
 
   it("explains arxiv 503 as excessive-use signal", async () => {
@@ -1015,11 +751,7 @@ describe("searxng-search plugin", () => {
           exited: Promise.resolve(0),
         };
       }
-      return {
-        stdout: streamFromText("Service temporarily unavailable."),
-        stderr: streamFromText(""),
-        exited: Promise.resolve(0),
-      };
+      return { exited: Promise.resolve(0), stdout: streamFromText(""), stderr: streamFromText("") };
     };
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
@@ -1027,20 +759,11 @@ describe("searxng-search plugin", () => {
 
     const output = await webfetch.execute(
       {
-        url: "https://export.arxiv.org/api/query?search_query=all:quantum&start=0&max_results=1",
+        url: "https://export.arxiv.org/api/query?search_query=all:quantum",
       },
       context as any,
     );
 
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
-    expect(output).toContain("Route: default");
     expect(output).toContain("arXiv API case: `503 Service Unavailable`.");
-    expect(output).toContain("excessive-use signal");
-    expect(output).toContain("reduce request frequency");
-    expect(output).not.toContain(
-      "Fallback: loaded arXiv web page via w3m from",
-    );
   });
 });

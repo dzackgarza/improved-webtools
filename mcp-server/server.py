@@ -9,7 +9,10 @@ Usage:
 """
 
 import json
+import os
 import subprocess
+import sys
+import urllib.request
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -25,7 +28,7 @@ mcp = FastMCP(
 # Resolve paths
 SERVER_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SERVER_DIR.parent
-MCP_SHIM = PROJECT_ROOT.parent / "mcp-shim" / "run-tool.ts"
+MCP_SHIM = PROJECT_ROOT.parent / "opencode-plugin-mcp-shim" / "run-tool.ts"
 PLUGIN_ENTRY = PROJECT_ROOT / "src" / "index.ts"
 
 
@@ -64,11 +67,17 @@ def _run_tool(tool_name: str, args: dict) -> str:
 )
 async def webfetch(
     url: Annotated[str, Field(description="URL to fetch (http/https only)")],
+    overwrite_cache: Annotated[
+        bool, Field(description="Set to true to bypass cached results")
+    ] = False,
     ctx: Optional[Context] = None,
 ) -> str:
-    """Fetch URL content as plain text. Handles GitHub, Reddit, YouTube, Wikipedia, arXiv."""
+    """Use when you need to fetch a webpage URL as plain text. Handles GitHub, Reddit, YouTube, Wikipedia, and arXiv."""
     try:
-        result = _run_tool("webfetch", {"url": url})
+        args = {"url": url}
+        if overwrite_cache:
+            args["overwrite_cache"] = True
+        result = _run_tool("webfetch", args)
         return result
     except subprocess.TimeoutExpired:
         return f"Error: webfetch timeout (>30s) for URL: {url}"
@@ -98,9 +107,12 @@ async def websearch(
     recency: Annotated[
         int, Field(description="Recency in days (1=day, 31=month, 365=year)")
     ] = 0,
+    domains: Annotated[
+        Optional[list[str]], Field(description="Specific domains to limit search to")
+    ] = None,
     ctx: Optional[Context] = None,
 ) -> str:
-    """Search web via SearxNG. Returns snippets with pagination support."""
+    """Use when you need to search the web via SearxNG. Returns snippets with pagination support."""
     try:
         args: dict = {
             "query": query,
@@ -111,6 +123,8 @@ async def websearch(
             args["category"] = category
         if recency:
             args["recency"] = recency
+        if domains:
+            args["domains"] = domains
 
         result = _run_tool("websearch", args)
         return result
@@ -121,6 +135,28 @@ async def websearch(
 
 
 def main() -> None:
+    # 1. Check Env Var
+    url = os.environ.get("SEARXNG_INSTANCE_URL")
+    if not url:
+        print(
+            "CRITICAL: SEARXNG_INSTANCE_URL is not set. MCP server cannot start.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # 2. Blocking Health Check
+    try:
+        # Hard dependency check: ensure SearxNG is reachable before starting
+        with urllib.request.urlopen(url, timeout=5) as response:
+            if response.getcode() >= 400:
+                raise Exception(f"HTTP {response.getcode()}")
+    except Exception as e:
+        print(
+            f"CRITICAL: SearxNG instance at {url} is unreachable: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     mcp.run()
 
 

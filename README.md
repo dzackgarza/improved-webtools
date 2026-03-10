@@ -1,27 +1,51 @@
-# improved-webtools
 
-OpenCode plugin that provides `webfetch` and `websearch`, plus a FastMCP wrapper for the same search/fetch logic.
+# Improved Web Tools
 
-## Install
+OpenCode plugin that shadows the built-in `webfetch` and `websearch` tools. It also
+includes a FastMCP wrapper for the same logic.
+
+## Installation
+
+Install dependencies and set up the project:
 
 ```bash
-cd /home/dzack/opencode-plugins/improved-webtools
+cd ./improved-webtools
 just install
 ```
 
-OpenCode plugin registration via `file:`:
+Register the plugin in OpenCode via `file:`:
 
 ```json
 {
   "plugin": [
-    "file:///home/dzack/opencode-plugins/improved-webtools/src/index.ts"
+    "file:///path/to/improved-webtools/src/index.ts"
   ]
 }
 ```
 
-Sample local config: [`improved-webtools/.config/opencode.json`](/home/dzack/opencode-plugins/improved-webtools/.config/opencode.json)
+Sample local configuration: [`improved-webtools/.config/opencode.json`](./.config/opencode.json)
 
-MCP install:
+> [!WARNING]
+> Using `git+` with local git repositories (e.g., `git+file://`, local `git+ssh://`) is NOT supported and will not work. Always use the `file://` directive for local development.
+
+Default local mode is the real shadowing path:
+- `webfetch`
+- `websearch`
+
+Manual debug mode exports non-shadowing aliases instead:
+- `webfetch_debug`
+- `websearch_debug`
+
+To enable debug mode locally:
+
+```bash
+export IMPROVED_WEBTOOLS_DEBUG_MODE="1"
+export OPENCODE_CONFIG="$PWD/.config/opencode.debug.json"
+```
+
+### MCP Installation
+
+Add the MCP server to your configuration:
 
 ```json
 {
@@ -39,56 +63,56 @@ MCP install:
 }
 ```
 
-## Tool Names
+## Tools
+
+### Default tool ids
+
+- `webfetch`
+- `websearch`
+
+### Debug-only tool ids
+
+- `webfetch_debug`
+- `websearch_debug`
 
 ### `webfetch`
 
-Description shown to the agent:
+Reads a webpage URL as plain text content. In debug mode the same behavior is exposed as
+`webfetch_debug`.
 
-```text
-Use when you need to read a webpage URL as plain text content.
-```
+**Parameters:**
 
-Schema:
+- `url`: (string) The URL to fetch.
+- `overwrite_cache?`: (boolean) Set to `true` to bypass cached results and force a fresh fetch.
 
-```text
-url: string
-prompt?: string
-cacheMode?: "default" | "refresh"
-cache_mode?: "default" | "refresh"
-```
+**Special Handling:**
 
-Special handling:
+- **ArXiv**: Routes `arxiv.org` URLs through a local artifact library. The library stores PDFs, source archives, BibTeX, and markdown conversions.
+- **Cache**: `overwrite_cache: true` rebuilds local artifact directories for ArXiv URLs.
 
-- `arxiv.org/abs/...`, `arxiv.org/pdf/...`, `arxiv.org/src/...`, and `arxiv.org/html/...` are routed through a local artifact library instead of plain `w3m`
-- the library stores `pdf`, source archive, extracted source, BibTeX, `metadata.yaml`, `SUMMARY.md`, and best-effort markdown/html conversions
-- `metadata.yaml` records both `processed_at` and `last_accessed_at`
-- `cacheMode: "refresh"` is the stale-result lever: it bypasses cached reads and forces a fresh fetch when you suspect the current result is outdated
-- for arXiv URLs, that same mode also rebuilds the local artifact directory from scratch
+**Environment Variables:**
 
-Environment:
-
-- `WEBFETCH_ARXIV_LIBRARY_DIR` overrides the default artifact root at `~/.cache/opencode-arxiv-library`
-- `REDDIT_APIFY_ACTOR` optionally overrides the Reddit actor used for live verification and handler calls
-- `YTDLP_COOKIES_FILE` optionally points at a Netscape-format cookie jar for `yt-dlp` when YouTube bot-checks gate spoken/informational videos
-- `YOUTUBE_VERIFY_TIMEOUT_MS` optionally increases the per-command timeout used by `just youtube-live-verify` on slow CPU hosts during Whisper transcription
+- `WEBFETCH_ARXIV_LIBRARY_DIR`: Overrides the default artifact root at `~/.cache/opencode-arxiv-library`
+- `REDDIT_APIFY_ACTOR`: Optionally overrides the Reddit actor used for live verification and handler calls
+- `YTDLP_COOKIES_FILE`: Optionally points at a Netscape-format cookie jar for `yt-dlp` when YouTube bot-checks gate spoken/informational videos
+- `YOUTUBE_VERIFY_TIMEOUT_MS`: Optionally increases the per-command timeout used by `just youtube-live-verify` on slow CPU hosts during Whisper transcription
 
 ### `websearch`
 
-Description shown to the agent:
-
-```text
-Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate.
-```
+Searches the web with optional category narrowing (e.g., news, npm, pypi, gh, science).
+Supports pagination via `offset` and `num_results`. In debug mode the same behavior is
+exposed as `websearch_debug`.
 
 ## Dependencies
 
-- Runtime: Bun, `@opencode-ai/plugin`, `js-tiktoken`
-- External commands: `gh`, `w3m`, `curl`
-- Handler-specific tools: `yt-dlp`, `uvx`, Apify CLI / actor access for Reddit
-- MCP wrapper: Python 3.11+, `uv`, `fastmcp`
+- **Runtime**: Bun, `@opencode-ai/plugin`, `js-tiktoken`
+- **Commands**: `gh`, `w3m`, `curl`
+- **Handlers**: `yt-dlp`, `uvx`, Apify CLI (for Reddit)
+- **MCP**: Python 3.11+, `uv`, `fastmcp`
 
-## Checks
+## Development
+
+Run checks and tests:
 
 ```bash
 just typecheck
