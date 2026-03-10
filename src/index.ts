@@ -69,7 +69,7 @@ const WIKIPEDIA_CONVERTER_SCRIPT = decodeURIComponent(
 );
 const WEBFETCH_BASE_DESCRIPTION = "Use when you need to read a webpage URL as plain text content.";
 const WEBSEARCH_BASE_DESCRIPTION =
-  "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate.";
+  "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
 
 function envFlagEnabled(value?: string): boolean {
   const normalized = (value ?? "").trim().toLowerCase();
@@ -83,7 +83,7 @@ const WEBFETCH_DESCRIPTION = IMPROVED_WEBTOOLS_DEBUG_MODE
   ? "Use only when explicitly debugging improved-webtools loading without shadowing the built-in webfetch tool. This debug-mode alias behaves the same as webfetch."
   : WEBFETCH_BASE_DESCRIPTION;
 const WEBSEARCH_DESCRIPTION = IMPROVED_WEBTOOLS_DEBUG_MODE
-  ? "Use only when explicitly debugging improved-webtools loading without shadowing the built-in websearch tool. This debug-mode alias behaves the same as websearch. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and numResults to paginate."
+  ? "Use only when explicitly debugging improved-webtools loading without shadowing the built-in websearch tool. This debug-mode alias behaves the same as websearch. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate."
   : WEBSEARCH_BASE_DESCRIPTION;
 
 const NARROWING_CATEGORIES = [

@@ -146,10 +146,9 @@ def main() -> None:
 
     # 2. Blocking Health Check
     try:
-        # Using a blocking request to ensure the instance is reachable
-        # 5s timeout is sufficient for a local/known instance check
+        # Hard dependency check: ensure SearxNG is reachable before starting
         with urllib.request.urlopen(url, timeout=5) as response:
-            if response.getcode() != 200:
+            if response.getcode() >= 400:
                 raise Exception(f"HTTP {response.getcode()}")
     except Exception as e:
         print(

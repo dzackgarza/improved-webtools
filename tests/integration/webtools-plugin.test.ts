@@ -1,12 +1,49 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { PASSPHRASE_WEBFETCH, PASSPHRASE_WEB_SEARCH } from "../../src/passphrases";
 
 const OPENCODE = process.env.OPENCODE_BIN || "opencode";
 const TOOL_DIR = process.cwd();
-const DEFAULT_CONFIG = `${TOOL_DIR}/.config/opencode.json`;
-const DEBUG_CONFIG = `${TOOL_DIR}/.config/opencode.debug.json`;
 const MAX_BUFFER = 8 * 1024 * 1024;
+
+let tempConfigPath: string;
+let tempDebugConfigPath: string;
+
+beforeAll(() => {
+  const pluginUrl = pathToFileURL(join(TOOL_DIR, "src/index.ts")).toString();
+  
+  const config = {
+    "$schema": "https://opencode.ai/config.json",
+    "model": "github-copilot/gpt-4.1",
+    "plugin": [pluginUrl],
+    "permission": {
+      "webfetch": "allow",
+      "websearch": "allow"
+    }
+  };
+  
+  const debugConfig = {
+    ...config,
+    "permission": {
+      "webfetch_debug": "allow",
+      "websearch_debug": "allow"
+    }
+  };
+
+  tempConfigPath = join(TOOL_DIR, `.config/temp.opencode.${Math.random().toString(36).slice(2)}.json`);
+  tempDebugConfigPath = join(TOOL_DIR, `.config/temp.opencode.debug.${Math.random().toString(36).slice(2)}.json`);
+
+  writeFileSync(tempConfigPath, JSON.stringify(config, null, 2));
+  writeFileSync(tempDebugConfigPath, JSON.stringify(debugConfig, null, 2));
+});
+
+afterAll(() => {
+  if (tempConfigPath) rmSync(tempConfigPath, { force: true });
+  if (tempDebugConfigPath) rmSync(tempDebugConfigPath, { force: true });
+});
 
 type RunOptions = {
   timeout?: number;
@@ -40,7 +77,7 @@ function run(prompt: string, options: RunOptions = {}) {
     maxBuffer: MAX_BUFFER,
     env: {
       ...process.env,
-      OPENCODE_CONFIG: options.config ?? DEFAULT_CONFIG,
+      OPENCODE_CONFIG: options.config ?? tempConfigPath,
       ...options.env,
     },
   });
@@ -103,7 +140,7 @@ describe("improved-webtools live e2e", () => {
     const events = runJson(
       "Call the tool named webfetch_debug with url=https://example.com. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
       {
-        config: DEBUG_CONFIG,
+        config: tempDebugConfigPath,
         env: {
           IMPROVED_WEBTOOLS_DEBUG_MODE: "1",
         },
@@ -117,7 +154,7 @@ describe("improved-webtools live e2e", () => {
     const events = runJson(
       "Call the tool named websearch_debug with query=openai. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
       {
-        config: DEBUG_CONFIG,
+        config: tempDebugConfigPath,
         env: {
           IMPROVED_WEBTOOLS_DEBUG_MODE: "1",
         },
