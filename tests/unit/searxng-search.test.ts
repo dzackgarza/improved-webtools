@@ -143,7 +143,7 @@ describe("searxng-search plugin", () => {
     else process.env.WEBFETCH_ARXIV_LIBRARY_DIR = originalArxivLibraryDir;
   });
 
-  it("formats websearch results with pagination", async () => {
+  it("formats paginated websearch results without claiming a total count", async () => {
     const pageOpenAI1 = fixtureJson<{
       results: Array<Record<string, unknown>>;
     }>("searxng/openai-page1.json");
@@ -211,7 +211,13 @@ describe("searxng-search plugin", () => {
     expect(output).toContain(
       "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
     );
-    expect(output).toContain("Showing results: 2-3 of 0");
+    expect(output).toContain("Showing results: 2-3");
+    expect(output).toContain("Returned results: 2");
+    expect(output).not.toContain("Total results:");
+    expect(output).not.toContain("Showing results: 2-3 of ");
+    expect(output).not.toContain(
+      "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.",
+    );
     expect(output).toContain(String(openAiExpectedWindow[0]?.url ?? ""));
     expect(output).toContain(String(openAiExpectedWindow[1]?.url ?? ""));
   });
@@ -302,12 +308,18 @@ describe("searxng-search plugin", () => {
     expect(oversizedWrite!.content).toContain(
       "Source URL: https://example.com/big",
     );
+    expect(oversizedWrite!.content).not.toContain(
+      "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.",
+    );
     expect(oversizedWrite!.content).toContain(largePrefix);
 
     expect(output).toContain(
       "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
     );
     expect(output).toContain("Route: default");
+    expect(output).not.toContain(
+      "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.",
+    );
     expect(output).toContain(
       "Full report exceeds inline limit (20000 tokens).",
     );
@@ -719,6 +731,32 @@ describe("searxng-search plugin", () => {
 
     expect(output).toContain("Route: github");
     expect(output).toContain('"number":14460');
+  });
+
+  it("surfaces low-level webfetch errors and points agents at a tagged GitHub bug", async () => {
+    (Bun as any).spawn = () => ({
+      stdout: streamFromText(""),
+      stderr: streamFromText("rate limit exceeded"),
+      exited: Promise.resolve(1),
+    });
+
+    const { webfetch } = await loadPlugin("http://localhost/searxng");
+    const context = buildContext();
+
+    const output = await webfetch.execute(
+      {
+        url: "https://github.com/anomalyco/opencode",
+      },
+      context as any,
+    );
+
+    expect(output).toContain(
+      "Failed to fetch URL: gh command failed (exit 1): rate limit exceeded",
+    );
+    expect(output).toContain("file a GitHub issue tagged `bug`");
+    expect(output).toContain(
+      "https://github.com/dzackgarza/opencode-plugin-improved-webtools/issues/new?labels=bug",
+    );
   });
 
   it("explains arxiv 429 as capacity-related", async () => {

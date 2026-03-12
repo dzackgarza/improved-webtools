@@ -68,6 +68,7 @@ describe("webfetch handler modules", () => {
       url: string;
       args: string[];
       sourceUrl: string;
+      responseFormat?: "plain" | "github-contents-json";
     }> = [
       {
         url: "https://github.com/anomalyco/opencode/pull/144",
@@ -76,16 +77,9 @@ describe("webfetch handler modules", () => {
       },
       {
         url: "https://github.com/anomalyco/opencode/blob/main/packages/opencode/src/index.ts",
-        args: [
-          "gh",
-          "api",
-          "repos/anomalyco/opencode/contents/packages/opencode/src/index.ts",
-          "-f",
-          "ref=main",
-          "-H",
-          "Accept: application/vnd.github.raw+json",
-        ],
+        args: ["gh", "api", "repos/anomalyco/opencode/contents/packages/opencode/src/index.ts?ref=main"],
         sourceUrl: "https://github.com/anomalyco/opencode/blob/main/packages/opencode/src/index.ts",
+        responseFormat: "github-contents-json",
       },
       {
         url: "https://github.com/anomalyco/opencode/commit/27c8fa5",
@@ -109,8 +103,9 @@ describe("webfetch handler modules", () => {
       },
       {
         url: "https://github.com/anomalyco/opencode",
-        args: ["gh", "repo", "view", "anomalyco/opencode", "--readme"],
+        args: ["gh", "api", "repos/anomalyco/opencode/readme"],
         sourceUrl: "https://github.com/anomalyco/opencode",
+        responseFormat: "github-contents-json",
       },
       {
         url: "https://github.com/anomalyco",
@@ -124,8 +119,59 @@ describe("webfetch handler modules", () => {
       expect(plan).toEqual({
         args: testCase.args,
         sourceUrl: testCase.sourceUrl,
+        responseFormat: testCase.responseFormat,
       });
     }
+  });
+
+  it("decodes github contents payloads for repo and blob URLs", async () => {
+    const repoReadme = "# OpenCode\n\nReadme body.\n";
+    const blobSource = "export const answer = 42;\n";
+
+    const payloadFor = (content: string, path: string) =>
+      JSON.stringify({
+        type: "file",
+        encoding: "base64",
+        path,
+        content: Buffer.from(content, "utf8").toString("base64"),
+      });
+
+    const outputFor = new Map<string, string>([
+      ["repos/anomalyco/opencode/readme", payloadFor(repoReadme, "README.md")],
+      [
+        "repos/anomalyco/opencode/contents/packages/opencode/src/index.ts?ref=main",
+        payloadFor(blobSource, "packages/opencode/src/index.ts"),
+      ],
+    ]);
+
+    const runCommand = async (args: string[]) => {
+      const key = args[2]!;
+      const stdoutText = outputFor.get(key);
+      expect(stdoutText).toBeDefined();
+      return {
+        stdoutText: stdoutText!,
+        stderrText: "",
+        exitCode: 0,
+      };
+    };
+
+    const repoOutput = await fetchGitHubContent({
+      url: new URL("https://github.com/anomalyco/opencode"),
+      runCommand,
+    });
+    expect(repoOutput.routeName).toBe("github");
+    expect(repoOutput.sourceUrl).toBe("https://github.com/anomalyco/opencode");
+    expect(repoOutput.content).toBe(repoReadme);
+
+    const blobOutput = await fetchGitHubContent({
+      url: new URL("https://github.com/anomalyco/opencode/blob/main/packages/opencode/src/index.ts"),
+      runCommand,
+    });
+    expect(blobOutput.routeName).toBe("github");
+    expect(blobOutput.sourceUrl).toBe(
+      "https://github.com/anomalyco/opencode/blob/main/packages/opencode/src/index.ts",
+    );
+    expect(blobOutput.content).toBe(blobSource);
   });
 
   it("renders reddit post/comment markdown from temp-file apify dataset output", async () => {

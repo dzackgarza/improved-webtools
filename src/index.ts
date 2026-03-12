@@ -1,6 +1,7 @@
 import { type Plugin, tool } from "@opencode-ai/plugin";
 import { getEncoding } from "js-tiktoken";
 import { createHash } from "node:crypto";
+import pkg from "../package.json" assert { type: "json" };
 import {
   fetchArxivLibraryContent,
   fetchGitHubContent,
@@ -18,6 +19,8 @@ import {
   YOUTUBE_DOMAINS,
 } from "./webfetch-handlers/index.ts";
 import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
+
+const PLUGIN_VERSION = pkg.version;
 
 type SearxngResult = {
   title: string;
@@ -58,8 +61,12 @@ const WEBFETCH_CACHE_TTL_MS =
     ? WEBFETCH_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
     : 90 * 24 * 60 * 60 * 1000;
 const TOKEN_ENCODER = getEncoding("o200k_base");
+const BUG_REPORTING_URL =
+  "https://github.com/dzackgarza/opencode-plugin-improved-webtools/issues/new?labels=bug";
 const ISSUE_REPORTING_HINT =
   "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.";
+const BUG_REPORTING_HINT =
+  `If this looks like a plugin/runtime bug, file a GitHub issue tagged \`bug\`: ${BUG_REPORTING_URL}. Include the failing URL and exact error above.`;
 const REDDIT_APIFY_ACTOR = (process.env.REDDIT_APIFY_ACTOR ?? "spry_wholemeal/reddit-scraper").trim();
 const WIKIPEDIA_API_USER_AGENT = (
   process.env.WIKIPEDIA_API_USER_AGENT ?? "opencode-improved-webfetch/1.0 (plugin)"
@@ -71,6 +78,10 @@ const WEBFETCH_BASE_DESCRIPTION = "Use when you need to read a webpage URL as pl
 const WEBSEARCH_BASE_DESCRIPTION =
   "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
 
+function withPluginVersion(description: string): string {
+  return `${description} (Plugin version: ${PLUGIN_VERSION})`;
+}
+
 function envFlagEnabled(value?: string): boolean {
   const normalized = (value ?? "").trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
@@ -80,11 +91,11 @@ const IMPROVED_WEBTOOLS_DEBUG_MODE = envFlagEnabled(process.env.IMPROVED_WEBTOOL
 const WEBFETCH_TOOL_ID = IMPROVED_WEBTOOLS_DEBUG_MODE ? "webfetch_debug" : "webfetch";
 const WEBSEARCH_TOOL_ID = IMPROVED_WEBTOOLS_DEBUG_MODE ? "websearch_debug" : "websearch";
 const WEBFETCH_DESCRIPTION = IMPROVED_WEBTOOLS_DEBUG_MODE
-  ? "Use only when explicitly debugging improved-webtools loading without shadowing the built-in webfetch tool. This debug-mode alias behaves the same as webfetch."
-  : WEBFETCH_BASE_DESCRIPTION;
+  ? withPluginVersion("Use only when explicitly debugging improved-webtools loading without shadowing the built-in webfetch tool. This debug-mode alias behaves the same as webfetch.")
+  : withPluginVersion(WEBFETCH_BASE_DESCRIPTION);
 const WEBSEARCH_DESCRIPTION = IMPROVED_WEBTOOLS_DEBUG_MODE
-  ? "Use only when explicitly debugging improved-webtools loading without shadowing the built-in websearch tool. This debug-mode alias behaves the same as websearch. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate."
-  : WEBSEARCH_BASE_DESCRIPTION;
+  ? withPluginVersion("Use only when explicitly debugging improved-webtools loading without shadowing the built-in websearch tool. This debug-mode alias behaves the same as websearch. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.")
+  : withPluginVersion(WEBSEARCH_BASE_DESCRIPTION);
 
 const NARROWING_CATEGORIES = [
   "news",
@@ -402,7 +413,6 @@ async function formatWebFetchOutput(input: {
     `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
     `Route: ${input.routeName}`,
     `Source URL: ${input.sourceUrl}`,
-    ISSUE_REPORTING_HINT,
   ];
   if (!text) {
     return [...prefix, "", "No readable text content extracted from this page."].join("\n");
@@ -537,7 +547,6 @@ function formatResults(input: {
   const top = input.response.results.slice(0, input.limit);
   const start = top.length > 0 ? input.offset + 1 : 0;
   const end = input.offset + top.length;
-  const total = input.response.number_of_results;
 
   const lines: string[] = [];
   lines.push(`Query: ${input.query}`);
@@ -545,9 +554,8 @@ function formatResults(input: {
     lines.push(`Category: ${input.category}`);
   }
   lines.push(`Offset: ${input.offset}`);
-  lines.push(`Total results: ${total}`);
   if (top.length > 0) {
-    lines.push(`Showing results: ${start}-${end} of ${total}`);
+    lines.push(`Showing results: ${start}-${end}`);
   } else {
     lines.push("Showing results: none");
   }
@@ -777,7 +785,6 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         if (!firstResponse) {
           return [
             `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-            ISSUE_REPORTING_HINT,
             "No results found.",
           ].join("\n");
         }
@@ -790,7 +797,6 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
 
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-          ISSUE_REPORTING_HINT,
           "",
           formatResults({
             query,
@@ -982,9 +988,8 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
             });
             return [
               `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
-              ISSUE_REPORTING_HINT,
-              "Failed to fetch URL.",
-              "If this persists, ask the user to check webfetch/plugin logs and add a report in ISSUES.md.",
+              `Failed to fetch URL: ${message}`,
+              BUG_REPORTING_HINT,
             ].join("\n");
           }
         },
