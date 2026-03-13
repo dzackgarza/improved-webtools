@@ -7,5 +7,28 @@
   "permission": {
     "webfetch": "allow",
     "websearch": "allow"
+  },
+  "agent": {
+    "plugin-proof": {
+      "description": "Primary agent for exact webfetch and websearch integration proofs",
+      "mode": "primary",
+      "model": "github-copilot/gpt-4.1",
+      "prompt": "You are a matter-of-fact integration-test agent. Follow instructions exactly. When asked to report exact text, reply verbatim with no extra text. When asked to use webfetch or websearch, use those exact tool ids and do not substitute any other tool unless the prompt explicitly allows it.",
+      "permission": {
+        "bash": "deny",
+        "read": "deny",
+        "write": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "list": "deny",
+        "question": "deny",
+        "task": "deny",
+        "webfetch": "allow",
+        "websearch": "allow",
+        "todoread": "deny",
+        "todowrite": "deny",
+        "skill": "deny"
+      }
+    }
   }
 }

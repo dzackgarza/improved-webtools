@@ -1,10 +1,8 @@
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
-
-
 # Improved Web Tools
 
-OpenCode plugin that shadows the built-in `webfetch` and `websearch` tools. It also
-includes a FastMCP wrapper for the same logic.
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
+
+OpenCode plugin that shadows the built-in `webfetch` and `websearch` tools with enhanced logic, robust domain-specific handlers, and metadata-rich output. It also includes a FastMCP wrapper for the same logic.
 
 ## Installation
 
@@ -12,21 +10,13 @@ Install dependencies and set up the project:
 
 ```bash
 cd ./improved-webtools
+direnv allow .
 just install
 ```
 
-Register the plugin in OpenCode via `file:`:
+Use the lowercase `justfile` entrypoints for local automation. Do not run `bun test`, `bunx tsc`, or `uv run pytest` directly.
 
-```json
-{
-  "plugin": [
-    "file:///path/to/improved-webtools/src/index.ts"
-  ]
-}
-```
-
-Sample local configuration: [`improved-webtools/.config/opencode.json`](./.config/opencode.json)
-Sample local MCP configuration: [`improved-webtools/.config/opencode.mcp.json`](./.config/opencode.mcp.json)
+Repo-local verification uses [`.envrc`](./.envrc), [`.config/opencode.json`](./.config/opencode.json), [`.config/opencode.debug.json`](./.config/opencode.debug.json), and checked-in symlinks under [`.config/plugins`](./.config/plugins) so OpenCode loads the real exporter without a machine-specific `file://` path.
 
 > [!WARNING]
 > Using `git+` with local git repositories (e.g., `git+file://`, local `git+ssh://`) is NOT supported and will not work. Always use the `file://` directive for local development.
@@ -58,13 +48,23 @@ Add the MCP server to your configuration:
       "command": [
         "uvx",
         "--from",
-        "git+https://github.com/dzackgarza/opencode-improved-webtools-plugin.git#subdirectory=mcp-server",
+        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-webtools/mcp-server",
         "improved-webtools-mcp"
       ]
     }
   }
 }
 ```
+
+## Features
+
+- **Shadowing**: Replaces the built-in `webfetch` and `websearch` tools with improved versions.
+- **SearXNG Backend**: Uses a private SearXNG instance for meta-search results. **(Requires `SEARXNG_INSTANCE_URL`)**.
+- **Domain Handlers**: Specialized markdown conversion for YouTube (transcripts), Reddit (nested comments), ArXiv (PDF/source/metadata), GitHub (files), and Wikipedia.
+- **Proof of Origin**: Outputs are prefixed with a tool-specific "passphrase" to prevent agent hallucinations.
+- **Token Management**: Automatically counts tokens and offloads large responses (>20k tokens) to temporary files to save context window.
+- **Caching**: Local filesystem cache for fetch results with configurable TTL.
+- **PDF Handling**: Detects binary PDFs and downloads them for local reading instead of dumping raw binary to the agent.
 
 ## Tools
 
@@ -80,47 +80,95 @@ Add the MCP server to your configuration:
 
 ### `webfetch`
 
-Reads a webpage URL as plain text content. In debug mode the same behavior is exposed as
-`webfetch_debug`.
+Reads a webpage URL as plain text content. In debug mode the same behavior is exposed as `webfetch_debug`.
 
 **Parameters:**
 
-- `url`: (string) The URL to fetch.
+- `url`: (string) The URL to fetch. Supports `http` and `https`.
 - `overwrite_cache?`: (boolean) Set to `true` to bypass cached results and force a fresh fetch.
 
-**Special Handling:**
+**Domain Handlers:**
 
-- **ArXiv**: Routes `arxiv.org` URLs through a local artifact library. The library stores PDFs, source archives, BibTeX, and markdown conversions.
-- **Cache**: `overwrite_cache: true` rebuilds local artifact directories for ArXiv URLs.
+- **ArXiv**: Routes `arxiv.org` URLs through a local artifact library (`~/.cache/opencode-arxiv-library`). It automatically attempts to recover from 429/503 errors by falling back from the API to web abstract pages via `w3m`. Generates markdown/HTML from LaTeX source via `pandoc`.
+- **YouTube**: Extracts transcripts and metadata. If captions are missing, it uses `openai-whisper` for speech-to-text. Requires `yt-dlp` (with impersonation/remote components), `ffmpeg`, `ffprobe`, and `openai-whisper`.
+- **Reddit**: Renders nested comment threads as markdown using an Apify-backed scraper. Requires the `apify` CLI, `apify login`, and the `spry_wholemeal/reddit-scraper` actor.
+- **GitHub**: Fetches raw file content or repository metadata using the `gh` CLI. Requires an authenticated `gh` session (`gh auth login`).
+- **Wikipedia**: Converts HTML to clean markdown using a specialized Python converter. **Note: Currently missing `wikipedia_html_to_markdown.py` script in some environments.**
+- **PDFs**: If a URL returns `application/pdf`, the file is downloaded to `/tmp/webfetch-pdf-XXXXXX/document.pdf` and the path is returned.
 
-**Environment Variables:**
+**Behavioral Guards:**
 
-- `WEBFETCH_ARXIV_LIBRARY_DIR`: Overrides the default artifact root at `~/.cache/opencode-arxiv-library`
-- `REDDIT_APIFY_ACTOR`: Optionally overrides the Reddit actor used for live verification and handler calls
-- `YTDLP_COOKIES_FILE`: Optionally points at a Netscape-format cookie jar for `yt-dlp` when YouTube bot-checks gate spoken/informational videos
-- `YOUTUBE_VERIFY_TIMEOUT_MS`: Optionally increases the per-command timeout used by `just youtube-live-verify` on slow CPU hosts during Whisper transcription
+- **Token Limits**: If the output exceeds 20,000 tokens (calculated via `o200k_base`), the full content is saved to a temp file and a reference is returned.
+- **Origin Verification**: Every output starts with a `Tool passphrase` to verify it was generated by the runtime.
 
 ### `websearch`
 
-Searches the web with optional category narrowing (e.g., news, npm, pypi, gh, science).
-Supports pagination via `offset` and `num_results`. In debug mode the same behavior is
-exposed as `websearch_debug`.
+Searches the web via a **SearXNG** instance. Supports pagination and category narrowing.
+
+**Parameters:**
+
+- `query`: (string) Search terms.
+- `category?`: (string) Narrow to: `news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg`.
+- `num_results?`: (number) Limit returned results (max 20).
+- `offset?`: (number) Pagination offset (max 200).
+- `recency?`: (number) Filter by days (e.g., `1` for past 24h).
+- `domains?`: (array) Restrict results to specific domains (e.g., `["github.com", "npmjs.com"]`).
+
+**Requirements:**
+- SearXNG instance must have `format=json` and `time_range` support enabled.
+
+## Environment Variables
+
+### Core Configuration
+
+- `SEARXNG_INSTANCE_URL`: **(REQUIRED)** The base URL of your SearXNG instance. Search will fail if this is not set.
+- `IMPROVED_WEBTOOLS_DEBUG_MODE`: Set to `1` to use `_debug` tool aliases.
+
+### Cache Settings
+
+- `WEBFETCH_CACHE_ENABLED`: Set to `0` to disable the local filesystem cache. (Default: `1`)
+- `WEBFETCH_CACHE_DIR`: Directory for fetch cache. (Default: `~/.cache/opencode-webfetch`)
+- `WEBFETCH_CACHE_TTL_DAYS`: Cache expiry in days. (Default: `90`)
+
+### Domain Specifics
+
+- `WEBFETCH_ARXIV_LIBRARY_DIR`: Overrides default ArXiv artifact root.
+- `WIKIPEDIA_API_USER_AGENT`: User-agent for Wikipedia API calls.
+- `REDDIT_APIFY_ACTOR`: Override for the Reddit scraper actor (`spry_wholemeal/reddit-scraper`).
+- `YTDLP_COOKIES_FILE`: Path to a Netscape cookie jar for `yt-dlp` (YouTube bot-checks).
+- `YOUTUBE_VERIFY_TIMEOUT_MS`: Timeout for YouTube verification (slow CPUs).
 
 ## Dependencies
 
-- **Runtime**: Bun, `@opencode-ai/plugin`, `js-tiktoken`
-- **Commands**: `gh`, `w3m`, `curl`
-- **Handlers**: `yt-dlp`, `uvx`, Apify CLI (for Reddit)
-- **MCP**: Python 3.11+, `uv`, `fastmcp`
+### Core Runtime
+- **Bun**: Primary TypeScript runtime.
+- **Python 3.11+**: Required for MCP and Wikipedia/YouTube conversion scripts.
+- **`uv` / `uvx`**: Recommended Python package manager for handling tool dependencies (`yt-dlp`, `whisper`, `pandoc`).
+
+### CLI Tools
+- **`just`**: Command runner for local automation.
+- **`direnv`**: Environment variable management via `.envrc`.
+- **`w3m` & `curl`**: Base tools for web fetching and fallbacks.
+- **`gh`**: Required for GitHub handler. Must be authenticated (`gh auth login`).
+- **`apify`**: Required for Reddit handler. Must be authenticated (`apify login`).
+- **`yt-dlp`**: Required for YouTube handler (invoked via `uvx`). Uses `curl-cffi` impersonation and remote components.
+- **`ffmpeg` & `ffprobe`**: Required for YouTube audio/video processing.
+- **`pandoc` & `tar`**: Required for ArXiv LaTeX-to-markdown processing.
+
+### Handler Specifics
+- **YouTube**: `openai-whisper` (invoked via `uvx`).
+- **Wikipedia**: `beautifulsoup4`, `markdownify` (invoked via `uvx`).
+- **Reddit**: `spry_wholemeal/reddit-scraper` (Apify actor).
+- **ArXiv**: Local library management and LaTeX conversion.
+- **MCP Server**: `fastmcp` (Python), `@dzackgarza/opencode-plugin-mcp-shim` (run at runtime via `bunx`).
 
 ## Development
 
 Run checks and tests:
 
 ```bash
-just typecheck
-just test
-just mcp-test
+direnv allow .
+just check
 just reddit-live-verify
 YTDLP_COOKIES_FILE=/abs/path/to/youtube.cookies just youtube-live-verify
 ```

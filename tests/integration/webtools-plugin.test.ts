@@ -1,175 +1,372 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { writeFileSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PASSPHRASE_WEBFETCH, PASSPHRASE_WEB_SEARCH } from "../../src/passphrases";
 
 const OPENCODE = process.env.OPENCODE_BIN || "opencode";
 const TOOL_DIR = process.cwd();
+const HOST = "127.0.0.1";
+const MANAGER_PACKAGE =
+  "git+ssh://git@github.com/dzackgarza/opencode-manager.git";
 const MAX_BUFFER = 8 * 1024 * 1024;
+const SERVER_START_TIMEOUT_MS = 60_000;
+const SESSION_TIMEOUT_MS = 240_000;
+const PRIMARY_AGENT_NAME = "plugin-proof";
 
-let tempConfigPath: string;
-let tempDebugConfigPath: string;
-
-beforeAll(() => {
-  const pluginUrl = pathToFileURL(join(TOOL_DIR, "src/index.ts")).toString();
-  
-  const config = {
-    "$schema": "https://opencode.ai/config.json",
-    "model": "github-copilot/gpt-4.1",
-    "plugin": [pluginUrl],
-    "permission": {
-      "webfetch": "allow",
-      "websearch": "allow"
-    }
+type SessionMessagePart = {
+  type?: string;
+  tool?: string;
+  state?: {
+    status?: string;
+    input?: unknown;
+    output?: string;
   };
-  
-  const debugConfig = {
-    ...config,
-    "permission": {
-      "webfetch_debug": "allow",
-      "websearch_debug": "allow"
-    }
+};
+
+type SessionMessage = {
+  info?: {
+    role?: string;
   };
-
-  tempConfigPath = join(TOOL_DIR, `.config/temp.opencode.${Math.random().toString(36).slice(2)}.json`);
-  tempDebugConfigPath = join(TOOL_DIR, `.config/temp.opencode.debug.${Math.random().toString(36).slice(2)}.json`);
-
-  writeFileSync(tempConfigPath, JSON.stringify(config, null, 2));
-  writeFileSync(tempDebugConfigPath, JSON.stringify(debugConfig, null, 2));
-});
-
-afterAll(() => {
-  if (tempConfigPath) rmSync(tempConfigPath, { force: true });
-  if (tempDebugConfigPath) rmSync(tempDebugConfigPath, { force: true });
-});
-
-type RunOptions = {
-  timeout?: number;
-  config?: string;
-  env?: Record<string, string>;
-  format?: "default" | "json";
+  parts?: SessionMessagePart[];
 };
 
 type ToolUseEvent = {
-  type: "tool_use";
-  part: {
-    type: "tool";
-    tool: string;
-    state: {
-      status?: string;
-      input?: unknown;
-      output?: string;
-    };
+  tool: string;
+  state: {
+    status?: string;
+    input?: unknown;
+    output?: string;
   };
 };
 
-function run(prompt: string, options: RunOptions = {}) {
-  const args = ["run", "--agent", "Minimal"];
-  if (options.format === "json") args.push("--format", "json");
-  args.push(prompt);
+type ServerHandle = {
+  baseUrl: string;
+  process: ChildProcess;
+  logs: () => string;
+};
 
-  const result = spawnSync(OPENCODE, args, {
-    cwd: TOOL_DIR,
-    encoding: "utf8",
-    timeout: options.timeout ?? 180_000,
-    maxBuffer: MAX_BUFFER,
-    env: {
-      ...process.env,
-      OPENCODE_CONFIG: options.config ?? tempConfigPath,
-      ...options.env,
+let tempConfigPath = "";
+let tempDebugConfigPath = "";
+let defaultServer: ServerHandle | undefined;
+let debugServer: ServerHandle | undefined;
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function findFreePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, HOST, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Failed to allocate a TCP port."));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+async function startServer(options: {
+  configPath: string;
+  extraEnv?: Record<string, string>;
+}): Promise<ServerHandle> {
+  spawnSync("direnv", ["allow", TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
+
+  const port = await findFreePort();
+  const baseUrl = `http://${HOST}:${port}`;
+  let logs = "";
+  const serverProcess = spawn(
+    "direnv",
+    [
+      "exec",
+      TOOL_DIR,
+      OPENCODE,
+      "serve",
+      "--hostname",
+      HOST,
+      "--port",
+      String(port),
+      "--print-logs",
+      "--log-level",
+      "INFO",
+    ],
+    {
+      cwd: TOOL_DIR,
+      env: {
+        ...process.env,
+        OPENCODE_CONFIG: options.configPath,
+        ...(options.extraEnv ?? {}),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+
+  const capture = (chunk: Buffer | string) => {
+    logs += chunk.toString();
+  };
+  serverProcess.stdout.on("data", capture);
+  serverProcess.stderr.on("data", capture);
+
+  const ready = `opencode server listening on ${baseUrl}`;
+  const deadline = Date.now() + SERVER_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (logs.includes(ready)) {
+      return {
+        baseUrl,
+        process: serverProcess,
+        logs: () => logs,
+      };
+    }
+    if (serverProcess.exitCode !== null) {
+      throw new Error(
+        `Custom OpenCode server exited early (${serverProcess.exitCode}).\n${logs}`,
+      );
+    }
+    await wait(200);
+  }
+
+  throw new Error(
+    `Timed out waiting for custom OpenCode server at ${baseUrl}.\n${logs}`,
+  );
+}
+
+async function stopServer(server: ServerHandle | undefined) {
+  if (!server || server.process.exitCode !== null) return;
+
+  server.process.kill("SIGINT");
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (server.process.exitCode !== null) return;
+    await wait(100);
+  }
+
+  server.process.kill("SIGKILL");
+}
+
+function runManager(baseUrl: string, args: string[]) {
+  const result = spawnSync(
+    "npx",
+    ["--yes", `--package=${MANAGER_PACKAGE}`, "opx", ...args],
+    {
+      cwd: TOOL_DIR,
+      env: {
+        ...process.env,
+        OPENCODE_BASE_URL: baseUrl,
+      },
+      encoding: "utf8",
+      timeout: SESSION_TIMEOUT_MS,
+      maxBuffer: MAX_BUFFER,
+    },
+  );
+  if (result.error) throw result.error;
+
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  if (result.status !== 0) {
+    throw new Error(
+      `Manager command failed: opx ${args.join(" ")}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+    );
+  }
+
+  return { stdout, stderr };
+}
+
+function parseKeptSessionID(stderr: string) {
+  const match = stderr.match(/\[opx\] session kept: (ses_[A-Za-z0-9]+)/);
+  if (!match) {
+    throw new Error(`Could not parse kept session ID.\n${stderr}`);
+  }
+  return match[1];
+}
+
+function runPrompt(baseUrl: string, prompt: string, lingerSeconds = 0) {
+  return runManager(baseUrl, [
+    "run",
+    "--agent",
+    PRIMARY_AGENT_NAME,
+    "--prompt",
+    prompt,
+    "--keep",
+    "--linger",
+    String(lingerSeconds),
+  ]);
+}
+
+function safeDeleteSession(baseUrl: string, sessionID: string | undefined) {
+  if (!sessionID) return;
+  try {
+    runManager(baseUrl, ["session", "delete", "--session", sessionID]);
+  } catch {
+    // best-effort cleanup in a noisy shared environment
+  }
+}
+
+function readMessages(baseUrl: string, sessionID: string): SessionMessage[] {
+  const { stdout } = runManager(baseUrl, [
+    "session",
+    "messages",
+    "--session",
+    sessionID,
+  ]);
+  return JSON.parse(stdout) as SessionMessage[];
+}
+
+function findCompletedToolUse(
+  messages: SessionMessage[],
+  toolName: string,
+): ToolUseEvent {
+  const match = messages
+    .filter((message) => message.info?.role === "assistant")
+    .flatMap((message) => message.parts ?? [])
+    .filter(
+      (part): part is Required<Pick<SessionMessagePart, "tool" | "state">> &
+        SessionMessagePart =>
+        part.type === "tool" &&
+        part.tool === toolName &&
+        typeof part.state === "object" &&
+        part.state !== null &&
+        part.state.status === "completed",
+    )
+    .at(-1);
+
+  if (!match) {
+    throw new Error(
+      `No completed tool use for ${toolName}.\n${JSON.stringify(messages, null, 2)}`,
+    );
+  }
+
+  return {
+    tool: toolName,
+    state: match.state,
+  };
+}
+
+beforeAll(async () => {
+  const pluginUrl = pathToFileURL(join(TOOL_DIR, "src/index.ts")).toString();
+
+  const config = {
+    $schema: "https://opencode.ai/config.json",
+    model: "github-copilot/gpt-4.1",
+    plugin: [pluginUrl],
+    permission: {
+      webfetch: "allow",
+      websearch: "allow",
+    },
+  };
+
+  const debugConfig = {
+    ...config,
+    permission: {
+      webfetch_debug: "allow",
+      websearch_debug: "allow",
+    },
+  };
+
+  tempConfigPath = join(
+    TOOL_DIR,
+    `.config/temp.opencode.${Math.random().toString(36).slice(2)}.json`,
+  );
+  tempDebugConfigPath = join(
+    TOOL_DIR,
+    `.config/temp.opencode.debug.${Math.random().toString(36).slice(2)}.json`,
+  );
+
+  writeFileSync(tempConfigPath, JSON.stringify(config, null, 2));
+  writeFileSync(tempDebugConfigPath, JSON.stringify(debugConfig, null, 2));
+
+  defaultServer = await startServer({ configPath: tempConfigPath });
+  debugServer = await startServer({
+    configPath: tempDebugConfigPath,
+    extraEnv: {
+      IMPROVED_WEBTOOLS_DEBUG_MODE: "1",
     },
   });
-  if (result.error) throw result.error;
-  return (result.stdout ?? "") + (result.stderr ?? "");
-}
+}, 120_000);
 
-function parseJsonEvents(output: string): unknown[] {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
-    });
-}
-
-function runJson(prompt: string, options: RunOptions = {}) {
-  return parseJsonEvents(run(prompt, { ...options, format: "json" }));
-}
-
-function findCompletedToolUse(events: unknown[], toolName: string): ToolUseEvent {
-  const match = events.find(
-    (event): event is ToolUseEvent =>
-      typeof event === "object" &&
-      event !== null &&
-      "type" in event &&
-      event.type === "tool_use" &&
-      "part" in event &&
-      typeof event.part === "object" &&
-      event.part !== null &&
-      "type" in event.part &&
-      event.part.type === "tool" &&
-      "tool" in event.part &&
-      event.part.tool === toolName &&
-      "state" in event.part &&
-      typeof event.part.state === "object" &&
-      event.part.state !== null &&
-      "status" in event.part.state &&
-      event.part.state.status === "completed",
-  );
-  expect(match).toBeDefined();
-  return match!;
-}
+afterAll(async () => {
+  await stopServer(defaultServer);
+  await stopServer(debugServer);
+  if (tempConfigPath) rmSync(tempConfigPath, { force: true });
+  if (tempDebugConfigPath) rmSync(tempDebugConfigPath, { force: true });
+}, 30_000);
 
 describe("improved-webtools live e2e", () => {
   it("proves default shadow-mode webfetch executes and returns the hidden passphrase", () => {
-    const events = runJson(
+    const firstTurn = runPrompt(
+      defaultServer!.baseUrl,
       "Call the tool named webfetch with url=https://example.com. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
     );
-    const toolUse = findCompletedToolUse(events, "webfetch");
-    expect(toolUse.part.state.output).toContain(PASSPHRASE_WEBFETCH);
+    const sessionID = parseKeptSessionID(firstTurn.stderr);
+
+    try {
+      const messages = readMessages(defaultServer!.baseUrl, sessionID);
+      const toolUse = findCompletedToolUse(messages, "webfetch");
+      expect(toolUse.state.output).toContain(PASSPHRASE_WEBFETCH);
+    } finally {
+      safeDeleteSession(defaultServer!.baseUrl, sessionID);
+    }
   }, 200_000);
 
   it("proves debug-mode webfetch_debug executes and returns the hidden passphrase", () => {
-    const events = runJson(
+    const firstTurn = runPrompt(
+      debugServer!.baseUrl,
       "Call the tool named webfetch_debug with url=https://example.com. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
-      {
-        config: tempDebugConfigPath,
-        env: {
-          IMPROVED_WEBTOOLS_DEBUG_MODE: "1",
-        },
-      },
     );
-    const toolUse = findCompletedToolUse(events, "webfetch_debug");
-    expect(toolUse.part.state.output).toContain(PASSPHRASE_WEBFETCH);
+    const sessionID = parseKeptSessionID(firstTurn.stderr);
+
+    try {
+      const messages = readMessages(debugServer!.baseUrl, sessionID);
+      const toolUse = findCompletedToolUse(messages, "webfetch_debug");
+      expect(toolUse.state.output).toContain(PASSPHRASE_WEBFETCH);
+    } finally {
+      safeDeleteSession(debugServer!.baseUrl, sessionID);
+    }
   }, 200_000);
 
   it("proves debug-mode websearch_debug executes and returns the hidden passphrase", () => {
-    const events = runJson(
+    const firstTurn = runPrompt(
+      debugServer!.baseUrl,
       "Call the tool named websearch_debug with query=openai. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
-      {
-        config: tempDebugConfigPath,
-        env: {
-          IMPROVED_WEBTOOLS_DEBUG_MODE: "1",
-        },
-      },
     );
-    const toolUse = findCompletedToolUse(events, "websearch_debug");
-    expect(toolUse.part.state.output).toContain(PASSPHRASE_WEB_SEARCH);
+    const sessionID = parseKeptSessionID(firstTurn.stderr);
+
+    try {
+      const messages = readMessages(debugServer!.baseUrl, sessionID);
+      const toolUse = findCompletedToolUse(messages, "websearch_debug");
+      expect(toolUse.state.output).toContain(PASSPHRASE_WEB_SEARCH);
+    } finally {
+      safeDeleteSession(debugServer!.baseUrl, sessionID);
+    }
   }, 200_000);
 
   it("proves the reddit handler executes a fresh fetch and returns the expected metadata lines", () => {
-    const events = runJson(
+    const firstTurn = runPrompt(
+      defaultServer!.baseUrl,
       "Call the tool named webfetch with url=https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/ and overwrite_cache=true. Then reply with ONLY this exact format: Author: <author> | Comments extracted: <count>.",
     );
-    const toolUse = findCompletedToolUse(events, "webfetch");
-    expect(toolUse.part.state.output).toContain("- Author: u/Thinklikeachef");
-    expect(toolUse.part.state.output).toContain("- Comments extracted: 25");
+    const sessionID = parseKeptSessionID(firstTurn.stderr);
+
+    try {
+      const messages = readMessages(defaultServer!.baseUrl, sessionID);
+      const toolUse = findCompletedToolUse(messages, "webfetch");
+      expect(toolUse.state.output).toContain("- Author: u/Thinklikeachef");
+      expect(toolUse.state.output).toContain("- Comments extracted: 25");
+    } finally {
+      safeDeleteSession(defaultServer!.baseUrl, sessionID);
+    }
   }, 200_000);
 });

@@ -5,7 +5,7 @@ This server imports the existing TypeScript plugin tools and exposes them
 via the Model Context Protocol (MCP) without modifying any original code.
 
 Usage:
-    uv run python server.py
+    uv run fastmcp run server.py
 """
 
 import json
@@ -28,17 +28,20 @@ mcp = FastMCP(
 # Resolve paths
 SERVER_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SERVER_DIR.parent
-MCP_SHIM = PROJECT_ROOT.parent / "opencode-plugin-mcp-shim" / "run-tool.ts"
 PLUGIN_ENTRY = PROJECT_ROOT / "src" / "index.ts"
+
+# Externalized dependency: opencode-plugin-mcp-shim
+MCP_SHIM_PACKAGE = "git+https://github.com/dzackgarza/opencode-plugin-mcp-shim.git"
 
 
 def _run_tool(tool_name: str, args: dict) -> str:
-    """Execute a tool via bun run and return formatted output."""
+    """Execute a tool via bunx with externalized shim and return formatted output."""
+    # We use bunx with the git URL to ensure the shim is available without sibling repo dependencies.
     cmd = [
-        "bun",
-        "--no-deps",
-        "run",
-        str(MCP_SHIM),
+        "bunx",
+        "--yes",
+        f"--package={MCP_SHIM_PACKAGE}",
+        "opencode-plugin-mcp-shim",
         str(PLUGIN_ENTRY),
         tool_name,
         json.dumps(args),
