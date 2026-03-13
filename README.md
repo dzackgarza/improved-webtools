@@ -18,9 +18,6 @@ Use the lowercase `justfile` entrypoints for local automation. Do not run `bun t
 
 Repo-local verification uses [`.envrc`](./.envrc), [`.config/opencode.json`](./.config/opencode.json), [`.config/opencode.debug.json`](./.config/opencode.debug.json), and checked-in symlinks under [`.config/plugins`](./.config/plugins) so OpenCode loads the real exporter without a machine-specific `file://` path.
 
-> [!WARNING]
-> Using `git+` with local git repositories (e.g., `git+file://`, local `git+ssh://`) is NOT supported and will not work. Always use the `file://` directive for local development.
-
 Default local mode is the real shadowing path:
 - `webfetch`
 - `websearch`
@@ -87,6 +84,16 @@ Reads a webpage URL as plain text content. In debug mode the same behavior is ex
 - `url`: (string) The URL to fetch. Supports `http` and `https`.
 - `overwrite_cache?`: (boolean) Set to `true` to bypass cached results and force a fresh fetch.
 
+**Example Output:**
+
+```
+Tool passphrase: <hidden>
+
+# Example Domain
+
+Fetched content as plain text...
+```
+
 **Domain Handlers:**
 
 - **ArXiv**: Routes `arxiv.org` URLs through a local artifact library (`~/.cache/opencode-arxiv-library`). It automatically attempts to recover from 429/503 errors by falling back from the API to web abstract pages via `w3m`. Generates markdown/HTML from LaTeX source via `pandoc`.
@@ -117,26 +124,33 @@ Searches the web via a **SearXNG** instance. Supports pagination and category na
 **Requirements:**
 - SearXNG instance must have `format=json` and `time_range` support enabled.
 
+**Example Output:**
+
+```
+Tool passphrase: <hidden>
+
+[1] Title of Result — https://example.com
+Snippet text for the first search result.
+
+[2] Another Result — https://other.com
+Snippet for second result.
+```
+
 ## Environment Variables
 
-### Core Configuration
-
-- `SEARXNG_INSTANCE_URL`: **(REQUIRED)** The base URL of your SearXNG instance. Search will fail if this is not set.
-- `IMPROVED_WEBTOOLS_DEBUG_MODE`: Set to `1` to use `_debug` tool aliases.
-
-### Cache Settings
-
-- `WEBFETCH_CACHE_ENABLED`: Set to `0` to disable the local filesystem cache. (Default: `1`)
-- `WEBFETCH_CACHE_DIR`: Directory for fetch cache. (Default: `~/.cache/opencode-webfetch`)
-- `WEBFETCH_CACHE_TTL_DAYS`: Cache expiry in days. (Default: `90`)
-
-### Domain Specifics
-
-- `WEBFETCH_ARXIV_LIBRARY_DIR`: Overrides default ArXiv artifact root.
-- `WIKIPEDIA_API_USER_AGENT`: User-agent for Wikipedia API calls.
-- `REDDIT_APIFY_ACTOR`: Override for the Reddit scraper actor (`spry_wholemeal/reddit-scraper`).
-- `YTDLP_COOKIES_FILE`: Path to a Netscape cookie jar for `yt-dlp` (YouTube bot-checks).
-- `YOUTUBE_VERIFY_TIMEOUT_MS`: Timeout for YouTube verification (slow CPUs).
+| Name | Required | Default | Controls |
+|------|----------|---------|---------|
+| `SEARXNG_INSTANCE_URL` | Yes | — | Base URL of your SearXNG instance |
+| `IMPROVED_WEBTOOLS_DEBUG_MODE` | No | — | Set to `1` to export `_debug` tool aliases instead of shadowing |
+| `IMPROVED_WEBTOOLS_TEST_PASSPHRASE` | No | — | Passphrase for integration test liveness proof |
+| `WEBFETCH_CACHE_ENABLED` | No | `1` | Set to `0` to disable local filesystem cache |
+| `WEBFETCH_CACHE_DIR` | No | `~/.cache/opencode-webfetch` | Directory for fetch cache |
+| `WEBFETCH_CACHE_TTL_DAYS` | No | `90` | Cache expiry in days |
+| `WEBFETCH_ARXIV_LIBRARY_DIR` | No | `~/.cache/opencode-arxiv-library` | ArXiv artifact root directory |
+| `WIKIPEDIA_API_USER_AGENT` | No | — | User-agent for Wikipedia API calls |
+| `REDDIT_APIFY_ACTOR` | No | `spry_wholemeal/reddit-scraper` | Reddit scraper Apify actor |
+| `YTDLP_COOKIES_FILE` | No | — | Netscape cookie jar path for yt-dlp |
+| `YOUTUBE_VERIFY_TIMEOUT_MS` | No | — | YouTube verification timeout (slow CPUs) |
 
 ## Dependencies
 
