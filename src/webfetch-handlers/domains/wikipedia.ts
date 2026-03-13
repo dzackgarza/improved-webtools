@@ -55,41 +55,46 @@ type WikipediaParseApiResponse = {
   };
 };
 
+/**
+ * Converts Wikipedia HTML to Markdown using pandoc.
+ * Pandoc is a robust, universal document converter already used for ArXiv LaTeX.
+ */
 async function convertWikipediaHtmlToMarkdown(input: {
   html: string;
   sourceUrl: string;
   pageTitle: string;
   runCommand: RunCommand;
-  converterScriptPath: string;
   convertTimeoutMs: number;
 }): Promise<string> {
   const tempDir = (await Bun.$`mktemp -d /tmp/webfetch-wikipedia-XXXXXX`.text()).trim();
   const htmlPath = `${tempDir}/article.html`;
   try {
     await Bun.write(htmlPath, input.html);
+    
+    // We use pandoc to convert the HTML article to commonmark (Markdown).
+    // We also use --strip-comments to keep it clean.
     const convert = await input.runCommand(
       [
-        "uvx",
-        "--with",
-        "beautifulsoup4",
-        "--with",
-        "markdownify",
-        "python",
-        input.converterScriptPath,
-        htmlPath,
-        input.sourceUrl,
-        input.pageTitle,
+        "pandoc",
+        "--from", "html",
+        "--to", "commonmark_x", // Modern Markdown variant
+        "--strip-comments",
+        htmlPath
       ],
       input.convertTimeoutMs,
     );
+    
     if (convert.exitCode !== 0) {
-      throw new Error(`wikipedia markdown conversion failed (exit ${convert.exitCode}): ${convert.stderrText.trim()}`);
+      throw new Error(`wikipedia markdown conversion via pandoc failed (exit ${convert.exitCode}): ${convert.stderrText.trim()}`);
     }
+    
     const markdown = convert.stdoutText.trim();
     if (!markdown) {
-      throw new Error("wikipedia markdown conversion returned empty content.");
+      throw new Error("wikipedia markdown conversion via pandoc returned empty content.");
     }
-    return markdown;
+    
+    // Prepend the Title and Source URL for better context
+    return `# ${input.pageTitle}\n\nSource: ${input.sourceUrl}\n\n---\n\n${markdown}`;
   } finally {
     await Bun.$`rm -rf ${tempDir}`.quiet();
   }
@@ -98,7 +103,6 @@ async function convertWikipediaHtmlToMarkdown(input: {
 export async function fetchWikipediaMarkdown(input: {
   url: URL;
   runCommand: RunCommand;
-  converterScriptPath: string;
   userAgent: string;
   convertTimeoutMs: number;
 }): Promise<WebFetchHandlerResult> {
@@ -139,12 +143,12 @@ export async function fetchWikipediaMarkdown(input: {
     displayTitle: payload.parse?.displaytitle,
     fallbackTitle: payload.parse?.title?.trim() || title.replaceAll("_", " "),
   });
+  
   const markdown = await convertWikipediaHtmlToMarkdown({
     html,
     sourceUrl,
     pageTitle: normalizedTitle,
     runCommand: input.runCommand,
-    converterScriptPath: input.converterScriptPath,
     convertTimeoutMs: input.convertTimeoutMs,
   });
 

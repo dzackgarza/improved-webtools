@@ -93,7 +93,7 @@ Reads a webpage URL as plain text content. In debug mode the same behavior is ex
 - **YouTube**: Extracts transcripts and metadata. If captions are missing, it uses `openai-whisper` for speech-to-text. Requires `yt-dlp` (with impersonation/remote components), `ffmpeg`, `ffprobe`, and `openai-whisper`.
 - **Reddit**: Renders nested comment threads as markdown using an Apify-backed scraper. Requires the `apify` CLI, `apify login`, and the `spry_wholemeal/reddit-scraper` actor.
 - **GitHub**: Fetches raw file content or repository metadata using the `gh` CLI. Requires an authenticated `gh` session (`gh auth login`).
-- **Wikipedia**: Converts HTML to clean markdown using a specialized Python converter. **Note: Currently missing `wikipedia_html_to_markdown.py` script in some environments.**
+- **Wikipedia**: Converts HTML to clean markdown using `pandoc`.
 - **PDFs**: If a URL returns `application/pdf`, the file is downloaded to `/tmp/webfetch-pdf-XXXXXX/document.pdf` and the path is returned.
 
 **Behavioral Guards:**
@@ -142,8 +142,8 @@ Searches the web via a **SearXNG** instance. Supports pagination and category na
 
 ### Core Runtime
 - **Bun**: Primary TypeScript runtime.
-- **Python 3.11+**: Required for MCP and Wikipedia/YouTube conversion scripts.
-- **`uv` / `uvx`**: Recommended Python package manager for handling tool dependencies (`yt-dlp`, `whisper`, `pandoc`).
+- **Python 3.11+**: Required for MCP and YouTube conversion scripts.
+- **`uv` / `uvx`**: Recommended Python package manager for handling tool dependencies (`yt-dlp`, `whisper`).
 
 ### CLI Tools
 - **`just`**: Command runner for local automation.
@@ -153,13 +153,13 @@ Searches the web via a **SearXNG** instance. Supports pagination and category na
 - **`apify`**: Required for Reddit handler. Must be authenticated (`apify login`).
 - **`yt-dlp`**: Required for YouTube handler (invoked via `uvx`). Uses `curl-cffi` impersonation and remote components.
 - **`ffmpeg` & `ffprobe`**: Required for YouTube audio/video processing.
-- **`pandoc` & `tar`**: Required for ArXiv LaTeX-to-markdown processing.
+- **`pandoc` & `tar`**: Required for ArXiv LaTeX and Wikipedia HTML processing.
 
 ### Handler Specifics
 - **YouTube**: `openai-whisper` (invoked via `uvx`).
-- **Wikipedia**: `beautifulsoup4`, `markdownify` (invoked via `uvx`).
 - **Reddit**: `spry_wholemeal/reddit-scraper` (Apify actor).
 - **ArXiv**: Local library management and LaTeX conversion.
+- **Wikipedia**: HTML-to-Markdown conversion via `pandoc`.
 - **MCP Server**: `fastmcp` (Python), `@dzackgarza/opencode-plugin-mcp-shim` (run at runtime via `bunx`).
 
 ## Development

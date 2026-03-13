@@ -71,9 +71,6 @@ const REDDIT_APIFY_ACTOR = (process.env.REDDIT_APIFY_ACTOR ?? "spry_wholemeal/re
 const WIKIPEDIA_API_USER_AGENT = (
   process.env.WIKIPEDIA_API_USER_AGENT ?? "opencode-improved-webfetch/1.0 (plugin)"
 ).trim();
-const WIKIPEDIA_CONVERTER_SCRIPT = decodeURIComponent(
-  new URL("./scripts/wikipedia_html_to_markdown.py", import.meta.url).pathname,
-);
 const WEBFETCH_BASE_DESCRIPTION = "Use when you need to read a webpage URL as plain text content.";
 const WEBSEARCH_BASE_DESCRIPTION =
   "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
@@ -612,7 +609,6 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         fetchWikipediaMarkdown({
           url,
           runCommand,
-          converterScriptPath: WIKIPEDIA_CONVERTER_SCRIPT,
           userAgent: WIKIPEDIA_API_USER_AGENT,
           convertTimeoutMs: WEBFETCH_WIKIPEDIA_CONVERT_TIMEOUT_MS,
         }),
