@@ -8,29 +8,29 @@ justfile-hygiene:
     exit 1
   fi
 
-install: install-ts install-mcp
+install: justfile-hygiene install-ts install-mcp
 
-install-ts:
+install-ts: justfile-hygiene
   direnv exec "{{repo_root}}" bun install
 
-install-mcp:
+install-mcp: justfile-hygiene
   direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv sync --dev'
 
-typecheck:
+typecheck: justfile-hygiene
   direnv exec "{{repo_root}}" bunx tsc --noEmit
 
-test:
+test: justfile-hygiene
   direnv exec "{{repo_root}}" bun test
 
-mcp-test:
-  direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv run pytest'
+mcp-test: justfile-hygiene
+  direnv exec "{{repo_root}}" sh -lc 'cd mcp-server && uv run python -m pytest'
 
 check: justfile-hygiene typecheck test mcp-test
 
-reddit-live-verify:
+reddit-live-verify: justfile-hygiene
   direnv exec "{{repo_root}}" bun scripts/verify-reddit-live.ts
 
-youtube-live-verify:
+youtube-live-verify: justfile-hygiene
   direnv exec "{{repo_root}}" bun scripts/verify-youtube-live.ts
 
 setup-npm-trust:

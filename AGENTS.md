@@ -33,9 +33,9 @@ Using `git+` with local git repos (e.g., `git+file://`, local `git+ssh://`) was 
 
 ### Test Order
 When debugging loading or shadowing, use this order:
-1. Prove the plugin loads in debug mode via `file://`
-2. Prove the plugin shadows in normal mode via `file://`
-3. Prove the plugin loads in debug mode via `git+`
-4. Prove the plugin shadows in normal mode via `git+`
+1. Prove the plugin loads in debug mode via the repo-local `.config/plugins` symlink surface
+2. Prove the plugin shadows in normal mode via the repo-local `.config/plugins` symlink surface
+3. Prove the plugin loads in debug mode via installed package or absolute `file://`
+4. Prove the plugin shadows in normal mode via installed package or absolute `file://`
 
 **DO NOT** treat the non-shadowing names as standard tools. They are internal debug hooks only.

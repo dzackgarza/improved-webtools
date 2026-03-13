@@ -9,7 +9,7 @@ OpenCode plugin that shadows the built-in `webfetch` and `websearch` tools with 
 Install dependencies and set up the project:
 
 ```bash
-cd ./improved-webtools
+cd ./opencode-plugin-improved-webtools
 direnv allow .
 just install
 ```

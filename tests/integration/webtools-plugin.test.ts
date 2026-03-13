@@ -1,16 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { writeFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { PASSPHRASE_WEBFETCH, PASSPHRASE_WEB_SEARCH } from "../../src/passphrases";
 
 const OPENCODE = process.env.OPENCODE_BIN || "opencode";
 const TOOL_DIR = process.cwd();
 const HOST = "127.0.0.1";
-const MANAGER_PACKAGE =
-  "git+ssh://git@github.com/dzackgarza/opencode-manager.git";
+const MANAGER_PACKAGE = join(TOOL_DIR, "..", "opencode-manager");
 const MAX_BUFFER = 8 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 60_000;
 const SESSION_TIMEOUT_MS = 240_000;
@@ -46,10 +46,9 @@ type ServerHandle = {
   baseUrl: string;
   process: ChildProcess;
   logs: () => string;
+  xdgRoot: string;
 };
 
-let tempConfigPath = "";
-let tempDebugConfigPath = "";
 let defaultServer: ServerHandle | undefined;
 let debugServer: ServerHandle | undefined;
 
@@ -86,6 +85,14 @@ async function startServer(options: {
 }): Promise<ServerHandle> {
   spawnSync("direnv", ["allow", TOOL_DIR], { cwd: TOOL_DIR, timeout: 30_000 });
 
+  const xdgRoot = mkdtempSync(join(tmpdir(), "opencode-webtools-xdg-"));
+  const configHome = join(xdgRoot, "config");
+  const cacheHome = join(xdgRoot, "cache");
+  const stateHome = join(xdgRoot, "state");
+  mkdirSync(configHome, { recursive: true });
+  mkdirSync(cacheHome, { recursive: true });
+  mkdirSync(stateHome, { recursive: true });
+
   const port = await findFreePort();
   const baseUrl = `http://${HOST}:${port}`;
   let logs = "";
@@ -108,7 +115,11 @@ async function startServer(options: {
       cwd: TOOL_DIR,
       env: {
         ...process.env,
+        XDG_CONFIG_HOME: configHome,
+        XDG_CACHE_HOME: cacheHome,
+        XDG_STATE_HOME: stateHome,
         OPENCODE_CONFIG: options.configPath,
+        OPENCODE_CONFIG_DIR: join(TOOL_DIR, ".config"),
         ...(options.extraEnv ?? {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -129,6 +140,7 @@ async function startServer(options: {
         baseUrl,
         process: serverProcess,
         logs: () => logs,
+        xdgRoot,
       };
     }
     if (serverProcess.exitCode !== null) {
@@ -145,16 +157,19 @@ async function startServer(options: {
 }
 
 async function stopServer(server: ServerHandle | undefined) {
-  if (!server || server.process.exitCode !== null) return;
+  if (!server) return;
 
-  server.process.kill("SIGINT");
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    if (server.process.exitCode !== null) return;
-    await wait(100);
+  if (server.process.exitCode === null) {
+    server.process.kill("SIGINT");
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (server.process.exitCode !== null) break;
+      await wait(100);
+    }
+    if (server.process.exitCode === null) server.process.kill("SIGKILL");
   }
 
-  server.process.kill("SIGKILL");
+  rmSync(server.xdgRoot, { recursive: true, force: true });
 }
 
 function runManager(baseUrl: string, args: string[]) {
@@ -256,41 +271,11 @@ function findCompletedToolUse(
 }
 
 beforeAll(async () => {
-  const pluginUrl = pathToFileURL(join(TOOL_DIR, "src/index.ts")).toString();
-
-  const config = {
-    $schema: "https://opencode.ai/config.json",
-    model: "github-copilot/gpt-4.1",
-    plugin: [pluginUrl],
-    permission: {
-      webfetch: "allow",
-      websearch: "allow",
-    },
-  };
-
-  const debugConfig = {
-    ...config,
-    permission: {
-      webfetch_debug: "allow",
-      websearch_debug: "allow",
-    },
-  };
-
-  tempConfigPath = join(
-    TOOL_DIR,
-    `.config/temp.opencode.${Math.random().toString(36).slice(2)}.json`,
-  );
-  tempDebugConfigPath = join(
-    TOOL_DIR,
-    `.config/temp.opencode.debug.${Math.random().toString(36).slice(2)}.json`,
-  );
-
-  writeFileSync(tempConfigPath, JSON.stringify(config, null, 2));
-  writeFileSync(tempDebugConfigPath, JSON.stringify(debugConfig, null, 2));
-
-  defaultServer = await startServer({ configPath: tempConfigPath });
+  defaultServer = await startServer({
+    configPath: join(TOOL_DIR, ".config/opencode.json"),
+  });
   debugServer = await startServer({
-    configPath: tempDebugConfigPath,
+    configPath: join(TOOL_DIR, ".config/opencode.debug.json"),
     extraEnv: {
       IMPROVED_WEBTOOLS_DEBUG_MODE: "1",
     },
@@ -300,15 +285,14 @@ beforeAll(async () => {
 afterAll(async () => {
   await stopServer(defaultServer);
   await stopServer(debugServer);
-  if (tempConfigPath) rmSync(tempConfigPath, { force: true });
-  if (tempDebugConfigPath) rmSync(tempDebugConfigPath, { force: true });
 }, 30_000);
 
 describe("improved-webtools live e2e", () => {
   it("proves default shadow-mode webfetch executes and returns the hidden passphrase", () => {
+    const nonce = randomUUID();
     const firstTurn = runPrompt(
       defaultServer!.baseUrl,
-      "Call the tool named webfetch with url=https://example.com. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
+      `Call the tool named webfetch with url=https://example.com. After the tool finishes, reply with ONLY this exact string and nothing else: ${nonce}`,
     );
     const sessionID = parseKeptSessionID(firstTurn.stderr);
 
@@ -316,15 +300,18 @@ describe("improved-webtools live e2e", () => {
       const messages = readMessages(defaultServer!.baseUrl, sessionID);
       const toolUse = findCompletedToolUse(messages, "webfetch");
       expect(toolUse.state.output).toContain(PASSPHRASE_WEBFETCH);
+      const allContent = messages.map((m) => JSON.stringify(m)).join(" ");
+      expect(allContent).toContain(nonce);
     } finally {
       safeDeleteSession(defaultServer!.baseUrl, sessionID);
     }
   }, 200_000);
 
   it("proves debug-mode webfetch_debug executes and returns the hidden passphrase", () => {
+    const nonce = randomUUID();
     const firstTurn = runPrompt(
       debugServer!.baseUrl,
-      "Call the tool named webfetch_debug with url=https://example.com. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
+      `Call the tool named webfetch_debug with url=https://example.com. After the tool finishes, reply with ONLY this exact string and nothing else: ${nonce}`,
     );
     const sessionID = parseKeptSessionID(firstTurn.stderr);
 
@@ -332,15 +319,18 @@ describe("improved-webtools live e2e", () => {
       const messages = readMessages(debugServer!.baseUrl, sessionID);
       const toolUse = findCompletedToolUse(messages, "webfetch_debug");
       expect(toolUse.state.output).toContain(PASSPHRASE_WEBFETCH);
+      const allContent = messages.map((m) => JSON.stringify(m)).join(" ");
+      expect(allContent).toContain(nonce);
     } finally {
       safeDeleteSession(debugServer!.baseUrl, sessionID);
     }
   }, 200_000);
 
   it("proves debug-mode websearch_debug executes and returns the hidden passphrase", () => {
+    const nonce = randomUUID();
     const firstTurn = runPrompt(
       debugServer!.baseUrl,
-      "Call the tool named websearch_debug with query=openai. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
+      `Call the tool named websearch_debug with query=openai. After the tool finishes, reply with ONLY this exact string and nothing else: ${nonce}`,
     );
     const sessionID = parseKeptSessionID(firstTurn.stderr);
 
@@ -348,6 +338,8 @@ describe("improved-webtools live e2e", () => {
       const messages = readMessages(debugServer!.baseUrl, sessionID);
       const toolUse = findCompletedToolUse(messages, "websearch_debug");
       expect(toolUse.state.output).toContain(PASSPHRASE_WEB_SEARCH);
+      const allContent = messages.map((m) => JSON.stringify(m)).join(" ");
+      expect(allContent).toContain(nonce);
     } finally {
       safeDeleteSession(debugServer!.baseUrl, sessionID);
     }

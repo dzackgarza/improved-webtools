@@ -1,5 +1,3 @@
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
-
 
 # Improved Web Tools MCP Server
 
@@ -19,7 +17,7 @@ uv sync --dev
 Execute the MCP server locally:
 
 ```bash
-uv run python server.py
+uv run improved-webtools-mcp
 ```
 
 ### Configuration
@@ -34,7 +32,7 @@ Add the server to your OpenCode configuration:
       "command": [
         "uvx",
         "--from",
-        "git+https://github.com/dzackgarza/opencode-improved-webtools-plugin.git#subdirectory=mcp-server",
+        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-webtools/mcp-server",
         "improved-webtools-mcp"
       ]
     }

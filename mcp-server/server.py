@@ -41,7 +41,7 @@ def _run_tool(tool_name: str, args: dict) -> str:
         "bunx",
         "--yes",
         f"--package={MCP_SHIM_PACKAGE}",
-        "opencode-plugin-mcp-shim",
+        "opencode-mcp-shim",
         str(PLUGIN_ENTRY),
         tool_name,
         json.dumps(args),

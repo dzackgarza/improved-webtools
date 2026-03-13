@@ -1,9 +1,9 @@
 name: Publish to npm
-on:
+'on':
   release:
-    types: [published]
-  workflow_dispatch:
-
+    types:
+    - published
+  workflow_dispatch: {}
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -11,13 +11,18 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
-      - run: bun test
-      - name: Publish to npm
-        run: npm publish --provenance
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        registry-url: https://registry.npmjs.org
+    - uses: oven-sh/setup-bun@v2
+    - uses: taiki-e/install-action@just
+    - uses: astral-sh/setup-uv@v6
+    - name: Install direnv
+      run: sudo apt-get update && sudo apt-get install -y direnv
+    - run: direnv allow .
+    - run: just --justfile justfile install
+    - run: just --justfile justfile check
+    - name: Publish to npm
+      run: npm publish --provenance
