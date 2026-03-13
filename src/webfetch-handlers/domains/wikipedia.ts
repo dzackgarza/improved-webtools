@@ -56,8 +56,60 @@ type WikipediaParseApiResponse = {
 };
 
 /**
+ * Strips common Wikipedia UI clutter from HTML using Bun's HTMLRewriter.
+ * Also converts relative URLs to absolute.
+ */
+function cleanWikipediaHtml(html: string, baseUrl: URL): string {
+  const clutterSelectors = [
+    ".infobox",
+    ".sidebar",
+    ".navbox",
+    ".mw-editsection",
+    ".reflist",
+    ".metadata",
+    ".ambox",
+    ".asbox",
+    ".catlinks",
+    "style",
+    "script",
+    ".hatnote",
+    ".noprint",
+    ".navigation-not-searchable",
+    "figure",
+    "img",
+    "table.sidebar",
+    ".reference", // Strip citation numbers [1][2]
+    "sup.reference"
+  ];
+
+  let rewriter = new HTMLRewriter();
+  for (const selector of clutterSelectors) {
+    rewriter = rewriter.on(selector, {
+      element(element) {
+        element.remove();
+      },
+    });
+  }
+
+  // Convert relative links to absolute
+  rewriter = rewriter.on("a[href]", {
+    element(element) {
+      const href = element.getAttribute("href");
+      if (href && (href.startsWith("/") || href.startsWith("#"))) {
+        try {
+          element.setAttribute("href", new URL(href, baseUrl).toString());
+        } catch {
+          // Ignore invalid URL parts
+        }
+      }
+    },
+  });
+
+  return rewriter.transform(html);
+}
+
+/**
  * Converts Wikipedia HTML to Markdown using pandoc.
- * Pandoc is a robust, universal document converter already used for ArXiv LaTeX.
  */
 async function convertWikipediaHtmlToMarkdown(input: {
   html: string;
@@ -69,16 +121,18 @@ async function convertWikipediaHtmlToMarkdown(input: {
   const tempDir = (await Bun.$`mktemp -d /tmp/webfetch-wikipedia-XXXXXX`.text()).trim();
   const htmlPath = `${tempDir}/article.html`;
   try {
-    await Bun.write(htmlPath, input.html);
+    const cleanedHtml = cleanWikipediaHtml(input.html, new URL(input.sourceUrl));
+    await Bun.write(htmlPath, cleanedHtml);
     
-    // We use pandoc to convert the HTML article to commonmark (Markdown).
-    // We also use --strip-comments to keep it clean.
+    // We use pandoc to convert the HTML article to markdown.
+    // We disable raw_html to force pandoc to strip or convert all HTML tags.
     const convert = await input.runCommand(
       [
         "pandoc",
         "--from", "html",
-        "--to", "commonmark_x", // Modern Markdown variant
+        "--to", "markdown-raw_html",
         "--strip-comments",
+        "--reference-links", // Use reference links for a cleaner look
         htmlPath
       ],
       input.convertTimeoutMs,
@@ -93,7 +147,6 @@ async function convertWikipediaHtmlToMarkdown(input: {
       throw new Error("wikipedia markdown conversion via pandoc returned empty content.");
     }
     
-    // Prepend the Title and Source URL for better context
     return `# ${input.pageTitle}\n\nSource: ${input.sourceUrl}\n\n---\n\n${markdown}`;
   } finally {
     await Bun.$`rm -rf ${tempDir}`.quiet();
