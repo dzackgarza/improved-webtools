@@ -89,9 +89,11 @@ async function startServer(options: {
   const configHome = join(xdgRoot, "config");
   const cacheHome = join(xdgRoot, "cache");
   const stateHome = join(xdgRoot, "state");
+  const testHome = join(xdgRoot, "home");
   mkdirSync(configHome, { recursive: true });
   mkdirSync(cacheHome, { recursive: true });
   mkdirSync(stateHome, { recursive: true });
+  mkdirSync(testHome, { recursive: true });
 
   const port = await findFreePort();
   const baseUrl = `http://${HOST}:${port}`;
@@ -118,6 +120,7 @@ async function startServer(options: {
         XDG_CONFIG_HOME: configHome,
         XDG_CACHE_HOME: cacheHome,
         XDG_STATE_HOME: stateHome,
+        OPENCODE_TEST_HOME: testHome,
         OPENCODE_CONFIG: options.configPath,
         OPENCODE_CONFIG_DIR: join(TOOL_DIR, ".config"),
         ...(options.extraEnv ?? {}),
