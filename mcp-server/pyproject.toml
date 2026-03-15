@@ -1,15 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "improved-webtools-mcp"
-version = "1.0.0"
-description = "FastMCP wrapper for improved-webtools"
+version = "1.1.0"
+description = "CLI-first improved-webtools package with Typer CLI and FastMCP wrapper"
 requires-python = ">=3.11"
-dependencies = ["fastmcp>=2.0.0"]
+dependencies = ["fastmcp>=2.0.0", "typer>=0.12.5"]
 
 [project.scripts]
-improved-webtools-mcp = "server:main"
+improved-webtools = "improved_webtools.cli:main"
+improved-webtools-mcp = "improved_webtools.server:main"
 
 [dependency-groups]
-dev = ["pytest-asyncio>=0.24.0", "inline-snapshot>=0.10.0"]
+dev = ["pytest>=8.3.5", "pytest-asyncio>=0.24.0"]
+
+[tool.hatch.build]
+include = [
+  "src/improved_webtools/**/*.py",
+  "src/improved_webtools/vendor/*.mjs",
+  "src/improved_webtools/vendor/*.py",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/improved_webtools"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

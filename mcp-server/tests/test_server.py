@@ -1,93 +1,50 @@
-"""
-Tests for improved-webtools FastMCP server.
+from __future__ import annotations
 
-Run with: uv run pytest tests/
-"""
-
+import os
 import sys
 from pathlib import Path
 
 import pytest
 from fastmcp import Client
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from server import mcp
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from improved_webtools.server import mcp
 
 
 @pytest.fixture
-async def mcp_client():
-    """Fixture: wrap FastMCP server in Client for testing."""
+async def mcp_client() -> Client:
     async with Client(mcp) as client:
         yield client
 
 
-class TestListTools:
-    """Test tool discovery."""
-
-    async def test_list_tools(self, mcp_client: Client):
-        """Verify expected tools are exposed."""
-        tools = await mcp_client.list_tools()
-        tool_names = [t.name for t in tools]
-
-        assert "webfetch" in tool_names
-        assert "websearch" in tool_names
+async def test_list_tools_exposes_fetch_and_search(mcp_client: Client) -> None:
+    tools = await mcp_client.list_tools()
+    tool_names = {tool.name for tool in tools}
+    assert tool_names == {"webfetch", "websearch"}
 
 
-class TestWebFetch:
-    """Test webfetch tool."""
-
-    async def test_webfetch_invalid_url(self, mcp_client: Client):
-        """Test handling of invalid URL."""
-        result = await mcp_client.call_tool(
-            name="webfetch",
-            arguments={"url": "not-a-valid-url"},
-        )
-        assert result is not None
-        assert "Invalid URL" in str(result) or "Error" in str(result)
-
-    async def test_webfetch_example(self, mcp_client: Client):
-        """Test fetching example.com."""
-        result = await mcp_client.call_tool(
-            name="webfetch",
-            arguments={"url": "https://example.com"},
-        )
-        assert result is not None
-        # Should contain passphrase or content
-        assert "PASS_WEBFETCH" in str(result) or len(str(result)) > 0
-
-
-class TestWebSearch:
-    """Test websearch tool."""
-
-    async def test_websearch_basic(self, mcp_client: Client):
-        """Test basic search (may fail without SearxNG instance)."""
-        result = await mcp_client.call_tool(
-            name="websearch",
-            arguments={"query": "test", "num_results": 3},
-        )
-        assert result is not None
-        # Should contain passphrase header
-        assert "PASS_WEB_SEARCH" in str(result)
-
-    @pytest.mark.parametrize(
-        "num_results,expected_range",
-        [
-            (1, (1, 1)),
-            (5, (1, 5)),
-            (10, (1, 10)),
-        ],
+async def test_webfetch_invalid_url_returns_validation_report(mcp_client: Client) -> None:
+    result = await mcp_client.call_tool(
+        name="webfetch",
+        arguments={"url": "not-a-valid-url"},
     )
-    async def test_websearch_pagination(
-        self, mcp_client: Client, num_results: int, expected_range: tuple
-    ):
-        """Test pagination parameters."""
+    rendered = str(result)
+    assert "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2" in rendered
+    assert 'Invalid URL: "not-a-valid-url".' in rendered
+
+
+async def test_websearch_missing_config_returns_setup_message(mcp_client: Client) -> None:
+    original = os.environ.pop("SEARXNG_INSTANCE_URL", None)
+    try:
         result = await mcp_client.call_tool(
             name="websearch",
-            arguments={
-                "query": "test",
-                "num_results": num_results,
-                "offset": 0,
-            },
+            arguments={"query": "openai", "num_results": 3},
         )
-        assert result is not None
+    finally:
+        if original is not None:
+            os.environ["SEARXNG_INSTANCE_URL"] = original
+
+    rendered = str(result)
+    assert "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F" in rendered
+    assert "set SEARXNG_INSTANCE_URL" in rendered

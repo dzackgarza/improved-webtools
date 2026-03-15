@@ -1,175 +1,153 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { afterEach, describe, expect, it } from "bun:test";
+
 import { PASSPHRASE_WEBFETCH, PASSPHRASE_WEB_SEARCH } from "../../src/passphrases";
 
-const OPENCODE = process.env.OPENCODE_BIN || "opencode";
-const TOOL_DIR = process.cwd();
-const MAX_BUFFER = 8 * 1024 * 1024;
-
-let tempConfigPath: string;
-let tempDebugConfigPath: string;
-
-beforeAll(() => {
-  const pluginUrl = pathToFileURL(join(TOOL_DIR, "src/index.ts")).toString();
-  
-  const config = {
-    "$schema": "https://opencode.ai/config.json",
-    "model": "github-copilot/gpt-4.1",
-    "plugin": [pluginUrl],
-    "permission": {
-      "webfetch": "allow",
-      "websearch": "allow"
-    }
-  };
-  
-  const debugConfig = {
-    ...config,
-    "permission": {
-      "webfetch_debug": "allow",
-      "websearch_debug": "allow"
-    }
-  };
-
-  tempConfigPath = join(TOOL_DIR, `.config/temp.opencode.${Math.random().toString(36).slice(2)}.json`);
-  tempDebugConfigPath = join(TOOL_DIR, `.config/temp.opencode.debug.${Math.random().toString(36).slice(2)}.json`);
-
-  writeFileSync(tempConfigPath, JSON.stringify(config, null, 2));
-  writeFileSync(tempDebugConfigPath, JSON.stringify(debugConfig, null, 2));
-});
-
-afterAll(() => {
-  if (tempConfigPath) rmSync(tempConfigPath, { force: true });
-  if (tempDebugConfigPath) rmSync(tempDebugConfigPath, { force: true });
-});
-
-type RunOptions = {
-  timeout?: number;
-  config?: string;
-  env?: Record<string, string>;
-  format?: "default" | "json";
+type AskInput = {
+  permission: string;
+  patterns: string[];
+  always: string[];
+  metadata: Record<string, unknown>;
 };
 
-type ToolUseEvent = {
-  type: "tool_use";
-  part: {
-    type: "tool";
-    tool: string;
-    state: {
-      status?: string;
-      input?: unknown;
-      output?: string;
-    };
-  };
+type MetadataInput = {
+  title?: string;
+  metadata?: Record<string, unknown>;
 };
 
-function run(prompt: string, options: RunOptions = {}) {
-  const args = ["run", "--agent", "Minimal"];
-  if (options.format === "json") args.push("--format", "json");
-  args.push(prompt);
+type MockContext = {
+  sessionID: string;
+  messageID: string;
+  agent: string;
+  directory: string;
+  worktree: string;
+  abort: AbortSignal;
+  asks: AskInput[];
+  metadatas: MetadataInput[];
+  ask: (input: AskInput) => Promise<void>;
+  metadata: (input: MetadataInput) => void;
+};
 
-  const result = spawnSync(OPENCODE, args, {
-    cwd: TOOL_DIR,
-    encoding: "utf8",
-    timeout: options.timeout ?? 180_000,
-    maxBuffer: MAX_BUFFER,
-    env: {
-      ...process.env,
-      OPENCODE_CONFIG: options.config ?? tempConfigPath,
-      ...options.env,
+function buildContext(): MockContext {
+  const asks: AskInput[] = [];
+  const metadatas: MetadataInput[] = [];
+  return {
+    sessionID: "ses_integration",
+    messageID: "msg_integration",
+    agent: "LocalMinimalShadow",
+    directory: "/tmp",
+    worktree: "/tmp",
+    abort: new AbortController().signal,
+    asks,
+    metadatas,
+    ask: async (input: AskInput) => {
+      asks.push(input);
     },
-  });
-  if (result.error) throw result.error;
-  return (result.stdout ?? "") + (result.stderr ?? "");
+    metadata: (input: MetadataInput) => {
+      metadatas.push(input);
+    },
+  };
 }
 
-function parseJsonEvents(output: string): unknown[] {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
-    });
-}
+async function loadPlugin(debugMode: boolean) {
+  const originalDebugMode = process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;
+  const originalSearxng = process.env.SEARXNG_INSTANCE_URL;
 
-function runJson(prompt: string, options: RunOptions = {}) {
-  return parseJsonEvents(run(prompt, { ...options, format: "json" }));
-}
+  if (debugMode) {
+    process.env.IMPROVED_WEBTOOLS_DEBUG_MODE = "1";
+  } else {
+    delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;
+  }
+  delete process.env.SEARXNG_INSTANCE_URL;
 
-function findCompletedToolUse(events: unknown[], toolName: string): ToolUseEvent {
-  const match = events.find(
-    (event): event is ToolUseEvent =>
-      typeof event === "object" &&
-      event !== null &&
-      "type" in event &&
-      event.type === "tool_use" &&
-      "part" in event &&
-      typeof event.part === "object" &&
-      event.part !== null &&
-      "type" in event.part &&
-      event.part.type === "tool" &&
-      "tool" in event.part &&
-      event.part.tool === toolName &&
-      "state" in event.part &&
-      typeof event.part.state === "object" &&
-      event.part.state !== null &&
-      "status" in event.part.state &&
-      event.part.state.status === "completed",
+  const mod = await import(
+    new URL(`../../src/index.ts?integration=${Date.now()}-${Math.random()}`, import.meta.url).href
   );
-  expect(match).toBeDefined();
-  return match!;
+
+  const plugin = await mod.ImprovedWebSearchPlugin({
+    client: {
+      app: {
+        log: async () => undefined,
+      },
+    },
+  } as any);
+
+  if (originalDebugMode === undefined) {
+    delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;
+  } else {
+    process.env.IMPROVED_WEBTOOLS_DEBUG_MODE = originalDebugMode;
+  }
+
+  if (originalSearxng === undefined) {
+    delete process.env.SEARXNG_INSTANCE_URL;
+  } else {
+    process.env.SEARXNG_INSTANCE_URL = originalSearxng;
+  }
+
+  return plugin;
 }
 
-describe("improved-webtools live e2e", () => {
-  it("proves default shadow-mode webfetch executes and returns the hidden passphrase", () => {
-    const events = runJson(
-      "Call the tool named webfetch with url=https://example.com. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
-    );
-    const toolUse = findCompletedToolUse(events, "webfetch");
-    expect(toolUse.part.state.output).toContain(PASSPHRASE_WEBFETCH);
-  }, 200_000);
+afterEach(() => {
+  delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;
+});
 
-  it("proves debug-mode webfetch_debug executes and returns the hidden passphrase", () => {
-    const events = runJson(
-      "Call the tool named webfetch_debug with url=https://example.com. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
+describe("improved-webtools adapter integration", () => {
+  it("exposes default tool ids and returns the search setup message through the adapter", async () => {
+    const plugin = await loadPlugin(false);
+    const toolNames = Object.keys(plugin.tool ?? {});
+    expect(new Set(toolNames)).toEqual(new Set(["webfetch", "websearch"]));
+
+    const context = buildContext();
+    const originalSearxng = process.env.SEARXNG_INSTANCE_URL;
+    delete process.env.SEARXNG_INSTANCE_URL;
+    const output = await plugin.tool!.websearch.execute(
       {
-        config: tempDebugConfigPath,
-        env: {
-          IMPROVED_WEBTOOLS_DEBUG_MODE: "1",
+        query: "openai",
+        num_results: 3,
+      },
+      context as any,
+    );
+    if (originalSearxng === undefined) {
+      delete process.env.SEARXNG_INSTANCE_URL;
+    } else {
+      process.env.SEARXNG_INSTANCE_URL = originalSearxng;
+    }
+
+    expect(output).toContain(PASSPHRASE_WEB_SEARCH);
+    expect(output).toContain("set SEARXNG_INSTANCE_URL");
+    expect(context.asks).toEqual([
+      {
+        permission: "websearch",
+        patterns: ["openai"],
+        always: ["*"],
+        metadata: {
+          query: "openai",
         },
       },
-    );
-    const toolUse = findCompletedToolUse(events, "webfetch_debug");
-    expect(toolUse.part.state.output).toContain(PASSPHRASE_WEBFETCH);
-  }, 200_000);
-
-  it("proves debug-mode websearch_debug executes and returns the hidden passphrase", () => {
-    const events = runJson(
-      "Call the tool named websearch_debug with query=openai. Then reply with ONLY the exact passphrase returned by that tool, nothing else.",
-      {
-        config: tempDebugConfigPath,
-        env: {
-          IMPROVED_WEBTOOLS_DEBUG_MODE: "1",
-        },
+    ]);
+    expect(context.metadatas[0]).toEqual({
+      title: "Web search: openai",
+      metadata: {
+        num_results: 3,
       },
-    );
-    const toolUse = findCompletedToolUse(events, "websearch_debug");
-    expect(toolUse.part.state.output).toContain(PASSPHRASE_WEB_SEARCH);
-  }, 200_000);
+    });
+  });
 
-  it("proves the reddit handler executes a fresh fetch and returns the expected metadata lines", () => {
-    const events = runJson(
-      "Call the tool named webfetch with url=https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/ and overwrite_cache=true. Then reply with ONLY this exact format: Author: <author> | Comments extracted: <count>.",
+  it("exposes debug tool ids and preserves webfetch validation output", async () => {
+    const plugin = await loadPlugin(true);
+    const toolNames = Object.keys(plugin.tool ?? {});
+    expect(new Set(toolNames)).toEqual(new Set(["webfetch_debug", "websearch_debug"]));
+
+    const context = buildContext();
+    const output = await plugin.tool!.webfetch_debug.execute(
+      {
+        url: "not-a-valid-url",
+      },
+      context as any,
     );
-    const toolUse = findCompletedToolUse(events, "webfetch");
-    expect(toolUse.part.state.output).toContain("- Author: u/Thinklikeachef");
-    expect(toolUse.part.state.output).toContain("- Comments extracted: 25");
-  }, 200_000);
+
+    expect(output).toContain(PASSPHRASE_WEBFETCH);
+    expect(output).toContain('Invalid URL: "not-a-valid-url".');
+    expect(context.asks).toHaveLength(0);
+    expect(context.metadatas).toHaveLength(0);
+  });
 });

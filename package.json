@@ -1,8 +1,10 @@
 {
   "name": "@dzackgarza/improved-webtools",
   "scripts": {
-    "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "bundle-bridge": "just --justfile justfile bundle-bridge",
+    "typecheck": "just --justfile justfile typecheck",
+    "test": "just --justfile justfile test",
+    "check": "just --justfile justfile check"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -21,11 +23,23 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dzackgarza/improved-webtools.git"
+    "url": "git+https://github.com/dzackgarza/opencode-plugin-improved-webtools.git"
   },
   "keywords": [
+    "cli",
     "opencode",
-    "plugin"
+    "plugin",
+    "webfetch",
+    "websearch"
   ],
-  "funding": "https://ko-fi.com/I2I57UKJ8"
+  "funding": "https://ko-fi.com/I2I57UKJ8",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md"
+  ]
 }

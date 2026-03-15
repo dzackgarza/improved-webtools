@@ -1,61 +1,53 @@
+# Improved Web Tools CLI and MCP
 
-# Improved Web Tools MCP Server
+This package ships two entrypoints:
 
-FastMCP wrapper providing `webfetch` and `websearch` capabilities.
+- `improved-webtools` for the Typer CLI
+- `improved-webtools-mcp` for the FastMCP server
 
-## Installation
+Both call the same bundled canonical bridge.
 
-Set up the environment and install dependencies:
+## Local Development
 
-```bash
-cd ./improved-webtools/mcp-server
-uv sync --dev
-```
-
-### Local Run
-
-Execute the MCP server locally:
+From the repo root:
 
 ```bash
-uv run improved-webtools-mcp
+just install
+uv run --directory mcp-server improved-webtools doctor
+uv run --directory mcp-server improved-webtools fetch https://example.com
+uv run --directory mcp-server improved-webtools-mcp
 ```
 
-### Configuration
+If you update the TypeScript bridge directly, rebuild the vendored bundle before running the CLI or MCP server:
 
-Add the server to your OpenCode configuration:
-
-```json
-{
-  "mcp": {
-    "improved-webtools": {
-      "type": "local",
-      "command": [
-        "uvx",
-        "--from",
-        "git+https://github.com/dzack/opencode-plugins#subdirectory=improved-webtools/mcp-server",
-        "improved-webtools-mcp"
-      ]
-    }
-  }
-}
+```bash
+just --justfile justfile bundle-bridge
 ```
 
-## MCP Tools
+## Remote Usage
 
-### `webfetch`
+CLI:
 
-Fetches the text content of a URL.
+```bash
+uvx --from git+https://github.com/dzackgarza/opencode-plugin-improved-webtools.git#subdirectory=mcp-server improved-webtools doctor
+```
 
-- `url`: (string) The target URL.
+MCP server:
 
-### `websearch`
+```bash
+uvx --from git+https://github.com/dzackgarza/opencode-plugin-improved-webtools.git#subdirectory=mcp-server improved-webtools-mcp
+```
 
-Searches the web using specific query parameters.
+## Required Setup
 
-- `query`: (string) Search terms.
-- `category?`: (string) Narrow search to specific categories.
-- `num_results?`: (number) Number of results to return.
-- `offset?`: (number) Result pagination offset.
-- `recency?`: (number) Filter by recency.
+- `bun` must be on `PATH`
+- `SEARXNG_INSTANCE_URL` must be set for `search`
 
-The server delegates tool execution to the TypeScript plugin through `opencode-plugin-mcp-shim/run-tool.ts`.
+Handler-specific commands:
+
+- `curl` and `w3m` for default fetches
+- `gh` for GitHub fetches
+- `apify` for Reddit fetches
+- `uvx` for Wikipedia and YouTube fetches
+
+Run `improved-webtools doctor` first when the environment is unclear.
