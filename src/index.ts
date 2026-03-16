@@ -79,6 +79,16 @@ function envFlagEnabled(value?: string): boolean {
 const IMPROVED_WEBTOOLS_DEBUG_MODE = envFlagEnabled(process.env.IMPROVED_WEBTOOLS_DEBUG_MODE);
 const WEBFETCH_TOOL_ID = IMPROVED_WEBTOOLS_DEBUG_MODE ? "webfetch_debug" : "webfetch";
 const WEBSEARCH_TOOL_ID = IMPROVED_WEBTOOLS_DEBUG_MODE ? "websearch_debug" : "websearch";
+async function checkDependency(command: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["which", command], { stdout: "ignore", stderr: "ignore" });
+    const exitCode = await proc.exited;
+    return exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
 const WEBFETCH_DESCRIPTION = IMPROVED_WEBTOOLS_DEBUG_MODE
   ? "Use only when explicitly debugging improved-webtools loading without shadowing the built-in webfetch tool. This debug-mode alias behaves the same as webfetch."
   : WEBFETCH_BASE_DESCRIPTION;
@@ -596,10 +606,23 @@ function formatResults(input: {
 }
 
 export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
+  if (!(await checkDependency("w3m"))) {
+    throw new Error(
+      "w3m is not installed or not in PATH. It is a required dependency for the webfetch tool. " +
+        "Please install w3m (e.g., 'apt install w3m', 'brew install w3m').",
+    );
+  }
+
   const webFetchDomainHandlers: readonly WebFetchDomainHandler[] = [
     {
       name: "wikipedia",
       domains: WIKIPEDIA_DOMAINS,
+      checkDependencies: async () => {
+        if (!(await checkDependency("uvx"))) {
+          return { ok: false, message: "uvx is required. Install uv (e.g. 'curl -LsSf https://astral.sh/uv/install.sh | sh')." };
+        }
+        return { ok: true };
+      },
       handle: async ({ url }) =>
         fetchWikipediaMarkdown({
           url,
@@ -612,6 +635,18 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     {
       name: "youtube",
       domains: YOUTUBE_DOMAINS,
+      checkDependencies: async () => {
+        if (!(await checkDependency("uvx"))) {
+          return { ok: false, message: "uvx is required. Install uv (e.g. 'curl -LsSf https://astral.sh/uv/install.sh | sh')." };
+        }
+        if (!(await checkDependency("yt-dlp"))) {
+          return { ok: false, message: "yt-dlp is required. Install it (e.g. 'brew install yt-dlp' or 'pip install yt-dlp')." };
+        }
+        if (!(await checkDependency("ffmpeg"))) {
+          return { ok: false, message: "ffmpeg is required. Install it (e.g. 'brew install ffmpeg' or 'apt install ffmpeg')." };
+        }
+        return { ok: true };
+      },
       handle: async ({ url }) =>
         fetchYoutubeTranscriptMarkdown({
           url,
@@ -632,6 +667,12 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     {
       name: "github",
       domains: GITHUB_DOMAINS,
+      checkDependencies: async () => {
+        if (!(await checkDependency("gh"))) {
+          return { ok: false, message: "gh (GitHub CLI) is required. Install it (e.g. 'brew install gh' or 'apt install gh')." };
+        }
+        return { ok: true };
+      },
       handle: async ({ url }) =>
         fetchGitHubContent({
           url,
@@ -882,6 +923,18 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
               });
             }
             const handler = findWebFetchHandler(webFetchDomainHandlers, parsed);
+            if (handler?.checkDependencies) {
+              const deps = await handler.checkDependencies();
+              if (!deps.ok) {
+                return [
+                  `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
+                  ISSUE_REPORTING_HINT,
+                  `Missing dependency for ${handler.name} handler:`,
+                  deps.message || "Required tool is not installed.",
+                ].join("\n");
+              }
+            }
+
             const fetched = useArxivLibrary
               ? await fetchArxivLibraryContent({
                   url: parsed,

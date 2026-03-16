@@ -345,6 +345,14 @@ describe("searxng-search plugin", () => {
         };
       }
 
+      if (args[0] === "which") {
+        return {
+          stdout: streamFromText("/usr/bin/w3m\n"),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
+
       return {
         stdout: streamFromText(""),
         stderr: streamFromText(`unexpected command: ${script}`),
@@ -364,9 +372,10 @@ describe("searxng-search plugin", () => {
       context as any,
     );
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.[2]).toContain("curl -sSIL");
-    expect(calls[1]?.[2]).toContain('curl -sSL --compressed --max-time 30 -o "$outfile"');
+    const curlCalls = calls.filter((c) => c[0] !== "which");
+    expect(curlCalls).toHaveLength(2);
+    expect(curlCalls[0]?.[2]).toContain("curl -sSIL");
+    expect(curlCalls[1]?.[2]).toContain('curl -sSL --compressed --max-time 30 -o "$outfile"');
     expect(output).toContain(
       "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
     );
@@ -384,6 +393,13 @@ describe("searxng-search plugin", () => {
     );
 
     (Bun as any).spawn = (args: string[]) => {
+      if (args[0] === "which") {
+        return {
+          stdout: streamFromText("/usr/bin/w3m\n"),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
       if (args[0] === "apify" && args[1] === "call") {
         return {
           stdout: streamFromText(JSON.stringify(apifyDataset)),
@@ -423,6 +439,13 @@ describe("searxng-search plugin", () => {
     const vtt = fixtureText("youtube/dQw4w9WgXcQ.en.vtt");
 
     (Bun as any).spawn = (args: string[]) => {
+      if (args[0] === "which") {
+        return {
+          stdout: streamFromText("/usr/bin/w3m\n"),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
       if (
         args[0] === "uvx" &&
         args.includes("yt-dlp") &&
@@ -524,6 +547,13 @@ describe("searxng-search plugin", () => {
     try {
       (Bun as any).spawn = (args: string[]) => {
         calls.push(args);
+        if (args[0] === "which") {
+          return {
+            stdout: streamFromText("/usr/bin/w3m\n"),
+            stderr: streamFromText(""),
+            exited: Promise.resolve(0),
+          };
+        }
         return {
           stdout: streamFromText("cached page content"),
           stderr: streamFromText(""),
@@ -551,7 +581,7 @@ describe("searxng-search plugin", () => {
         context as any,
       );
 
-      expect(calls).toHaveLength(2);
+      expect(calls.filter((c) => c[0] !== "which")).toHaveLength(2);
       expect(first).toContain("Route: default");
       expect(second).toContain("Route: default/cache");
     } finally {
@@ -569,6 +599,13 @@ describe("searxng-search plugin", () => {
     try {
       (Bun as any).spawn = (args: string[]) => {
         calls.push(args);
+        if (args[0] === "which") {
+          return {
+            stdout: streamFromText("/usr/bin/w3m\n"),
+            stderr: streamFromText(""),
+            exited: Promise.resolve(0),
+          };
+        }
         const command = args[2] ?? "";
         if (command.includes("curl -sSIL")) {
           return {
@@ -599,7 +636,7 @@ describe("searxng-search plugin", () => {
         },
         context as any,
       );
-      expect(calls).toHaveLength(2);
+      expect(calls.filter((c) => c[0] !== "which")).toHaveLength(2);
       const refreshed = await webfetch.execute(
         {
           url: "https://example.com/cache-refresh",
@@ -607,7 +644,7 @@ describe("searxng-search plugin", () => {
         },
         context as any,
       );
-      expect(calls).toHaveLength(4);
+      expect(calls.filter((c) => c[0] !== "which")).toHaveLength(4);
       expect(first).toContain("Route: default");
       expect(refreshed).toContain("Route: default");
       expect(refreshed).toContain("refreshed page content");
