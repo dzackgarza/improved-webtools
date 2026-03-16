@@ -211,7 +211,7 @@ describe("searxng-search plugin", () => {
     expect(output).toContain(
       "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
     );
-    expect(output).toContain("Showing results: 2-3 of 0");
+    expect(output).toContain("Showing results: 2-3 of 3");
     expect(output).toContain(String(openAiExpectedWindow[0]?.url ?? ""));
     expect(output).toContain(String(openAiExpectedWindow[1]?.url ?? ""));
   });

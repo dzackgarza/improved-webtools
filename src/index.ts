@@ -537,7 +537,8 @@ function formatResults(input: {
   const top = input.response.results.slice(0, input.limit);
   const start = top.length > 0 ? input.offset + 1 : 0;
   const end = input.offset + top.length;
-  const total = input.response.number_of_results;
+  const reportedTotal = input.response.number_of_results || 0;
+  const total = Math.max(reportedTotal, input.offset + input.response.results.length);
 
   const lines: string[] = [];
   lines.push(`Query: ${input.query}`);
