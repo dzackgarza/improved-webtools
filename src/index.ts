@@ -639,9 +639,8 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         if (!(await checkDependency("uvx"))) {
           return { ok: false, message: "uvx is required. Install uv (e.g. 'curl -LsSf https://astral.sh/uv/install.sh | sh')." };
         }
-        if (!(await checkDependency("yt-dlp"))) {
-          return { ok: false, message: "yt-dlp is required. Install it (e.g. 'brew install yt-dlp' or 'pip install yt-dlp')." };
-        }
+        // yt-dlp is invoked via `uvx --from yt-dlp[default,curl-cffi] yt-dlp` so it does
+        // not need to be installed globally; uvx fetches it on demand. Skip the global check.
         if (!(await checkDependency("ffmpeg"))) {
           return { ok: false, message: "ffmpeg is required. Install it (e.g. 'brew install ffmpeg' or 'apt install ffmpeg')." };
         }
