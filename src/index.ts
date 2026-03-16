@@ -18,6 +18,11 @@ import {
   YOUTUBE_DOMAINS,
 } from "./webfetch-handlers/index.ts";
 import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
+import {
+  formatArxivServiceMessage,
+  buildArxivFallbackUrl,
+  isLikelyArxivErrorBody,
+} from "./webfetch-handlers/domains/arxiv.ts";
 
 type SearxngResult = {
   title: string;
@@ -317,79 +322,6 @@ async function downloadPdfToTemp(url: URL): Promise<CommandExecutionResult> {
       'printf "%s\\n" "$outfile"',
     ].join("; "),
   ]);
-}
-
-function formatArxivServiceMessage(input: {
-  url: URL;
-  statusCode?: number;
-  content: string;
-}): string | undefined {
-  if (!hostMatchesDomain(input.url.hostname, "arxiv.org")) return undefined;
-  const body = input.content.trim().toLowerCase();
-
-  if (input.statusCode === 429 || body === "rate exceeded." || body === "rate exceeded") {
-    return [
-      "arXiv API case: `429 Rate exceeded`.",
-      "Interpretation: this indicates arXiv server capacity pressure, not abusive request rate from your script.",
-      "Action: retry later with backoff; keep polite spacing (~3 seconds) between repeated API calls.",
-      "Reference: https://groups.google.com/a/arxiv.org/g/api/c/pNB3lnxf4mQ",
-    ].join("\n");
-  }
-
-  if (input.statusCode === 503) {
-    return [
-      "arXiv API case: `503 Service Unavailable`.",
-      "Interpretation: this is the excessive-use signal from arXiv API ops.",
-      "Action: reduce request frequency, use smaller slices/paging, and keep polite spacing (~3 seconds) between repeated calls.",
-      "Reference: https://groups.google.com/a/arxiv.org/g/api/c/pNB3lnxf4mQ",
-    ].join("\n");
-  }
-
-  return undefined;
-}
-
-function buildArxivFallbackUrl(url: URL): URL | undefined {
-  if (!hostMatchesDomain(url.hostname, "arxiv.org")) return undefined;
-  if (url.pathname !== "/api/query") return undefined;
-
-  const rawIdList = (url.searchParams.get("id_list") ?? "").trim();
-  if (rawIdList) {
-    const firstId = rawIdList
-      .split(",")
-      .map((item) => item.trim())
-      .find((item) => item.length > 0);
-    if (firstId) {
-      const normalizedId = firstId.replace(/^arxiv:/i, "");
-      const fallback = new URL("https://arxiv.org/");
-      fallback.pathname = `/abs/${normalizedId}`;
-      return fallback;
-    }
-  }
-
-  const rawSearch = (url.searchParams.get("search_query") ?? "").trim();
-  if (rawSearch) {
-    const fallback = new URL("https://arxiv.org/search/");
-    fallback.searchParams.set("query", rawSearch);
-    fallback.searchParams.set("searchtype", "all");
-    fallback.searchParams.set("source", "header");
-    return fallback;
-  }
-
-  return undefined;
-}
-
-function isLikelyArxivErrorBody(content: string): boolean {
-  const normalized = content.trim().toLowerCase();
-  return (
-    normalized === "rate exceeded." ||
-    normalized === "rate exceeded" ||
-    normalized === "service unavailable." ||
-    normalized === "service unavailable" ||
-    normalized === "service temporarily unavailable." ||
-    normalized === "service temporarily unavailable" ||
-    normalized.includes("service temporarily unavailable") ||
-    normalized.includes("too many requests")
-  );
 }
 
 async function formatWebFetchOutput(input: {
