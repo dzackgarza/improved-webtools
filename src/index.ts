@@ -538,7 +538,9 @@ function formatResults(input: {
   const start = top.length > 0 ? input.offset + 1 : 0;
   const end = input.offset + top.length;
   const reportedTotal = input.response.number_of_results || 0;
-  const total = Math.max(reportedTotal, input.offset + input.response.results.length);
+  // Only fall back to offset-derived count when the backend reports 0 (unknown total).
+  // Math.max would inflate totals on paginated requests past the result set end.
+  const total = reportedTotal > 0 ? reportedTotal : input.offset + input.response.results.length;
 
   const lines: string[] = [];
   lines.push(`Query: ${input.query}`);
