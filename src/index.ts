@@ -606,13 +606,6 @@ function formatResults(input: {
 }
 
 export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
-  if (!(await checkDependency("w3m"))) {
-    throw new Error(
-      "w3m is not installed or not in PATH. It is a required dependency for the webfetch tool. " +
-        "Please install w3m (e.g., 'apt install w3m', 'brew install w3m').",
-    );
-  }
-
   const webFetchDomainHandlers: readonly WebFetchDomainHandler[] = [
     {
       name: "wikipedia",
@@ -891,6 +884,14 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
               `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
               ISSUE_REPORTING_HINT,
               `Unsupported URL protocol for webfetch: ${parsed.protocol}`,
+            ].join("\n");
+          }
+
+          if (!(await checkDependency("w3m"))) {
+            return [
+              `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
+              "w3m is not installed or not in PATH. It is a required dependency for webfetch.",
+              "Install with: apt install w3m  OR  brew install w3m",
             ].join("\n");
           }
 
