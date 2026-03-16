@@ -892,9 +892,10 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                 ? await handler.handle({ url: parsed })
               : await (async () => {
                   const httpMetadata = await fetchHttpMetadata(parsed);
-                  if (httpMetadata.statusCode === 404) {
-                    throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
-                  }
+                  // fetchHttpMetadata uses a HEAD request; some servers return 404 to HEAD
+                  // but serve content on GET, so only treat HEAD 404 as a hint, not definitive.
+                  // We still proceed to fetchWebContentWithW3M; if the resource truly doesn't
+                  // exist, w3m will surface the error naturally.
                   if (isPdfContentType(httpMetadata.contentType)) {
                     const downloadResult = await downloadPdfToTemp(parsed);
                     if (downloadResult.exitCode !== 0) {
