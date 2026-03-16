@@ -86,6 +86,18 @@ async function pickTranscriptFile(tempDir: string): Promise<string | undefined> 
   return `${tempDir}/${first}`;
 }
 
+function sanitizeStderr(stderr: string): string {
+  let clean = stderr;
+  const cookiesFile = (process.env.YTDLP_COOKIES_FILE ?? "").trim();
+  if (cookiesFile) {
+    clean = clean.replaceAll(cookiesFile, "[REDACTED_COOKIES_PATH]");
+  }
+  // Redact any absolute paths that look like config/credential files
+  const sensitivePathRegex = /(?:^|\s)(\/(?:[\w.-]+\/)*[\w.-]*(?:cookie|config|cred|secret|auth|netrc|token|key)[\w.-]*)(?:\s|$)/gi;
+  clean = clean.replaceAll(sensitivePathRegex, " [REDACTED_PATH] ");
+  return clean.trim();
+}
+
 export async function fetchYoutubeTranscriptMarkdown(input: {
   url: URL;
   runCommand: RunCommand;
@@ -102,7 +114,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
           "# YouTube Transcript",
           "",
           "Transcript extraction failed at subtitle discovery.",
-          `Reason: ${listSubs.stderrText.trim() || `yt-dlp exited ${listSubs.exitCode}`}`,
+          `Reason: ${sanitizeStderr(listSubs.stderrText) || `yt-dlp exited ${listSubs.exitCode}`}`,
           "",
           "Pipeline requirements:",
           "- yt-dlp with curl-cffi impersonation support.",
@@ -165,7 +177,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
           "# YouTube Transcript",
           "",
           "Transcript extraction failed at audio download stage.",
-          `Reason: ${audioDownload.stderrText.trim() || `yt-dlp exited ${audioDownload.exitCode}`}`,
+          `Reason: ${sanitizeStderr(audioDownload.stderrText) || `yt-dlp exited ${audioDownload.exitCode}`}`,
           "",
           "Check that YouTube access is available from this environment and bot-check/cookies requirements are satisfied.",
         ].join("\n"),
@@ -212,7 +224,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
           "# YouTube Transcript",
           "",
           "Whisper transcription stage failed.",
-          `Reason: ${whisper.stderrText.trim() || `whisper exited ${whisper.exitCode}`}`,
+          `Reason: ${sanitizeStderr(whisper.stderrText) || `whisper exited ${whisper.exitCode}`}`,
         ].join("\n"),
       };
     }
