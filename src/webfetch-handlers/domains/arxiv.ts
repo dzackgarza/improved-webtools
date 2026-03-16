@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { hostMatchesDomain, type CommandExecutionResult, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
+import { ResourceNotFoundError, hostMatchesDomain, type CommandExecutionResult, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
 
 export const ARXIV_DOMAINS = ["arxiv.org", "www.arxiv.org"] as const;
 
@@ -322,6 +322,9 @@ export function isArxivLibraryUrl(url: URL): boolean {
 async function fetchTextOrThrow(fetchImpl: FetchImpl, url: string): Promise<string> {
   const response = await fetchImpl(url);
   if (!response.ok) {
+    if (response.status === 404) {
+      throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
+    }
     throw new Error(`arXiv request failed (${response.status} ${response.statusText}) for ${url}`);
   }
   return await response.text();
@@ -330,6 +333,9 @@ async function fetchTextOrThrow(fetchImpl: FetchImpl, url: string): Promise<stri
 async function fetchBytesOrThrow(fetchImpl: FetchImpl, url: string): Promise<Uint8Array> {
   const response = await fetchImpl(url);
   if (!response.ok) {
+    if (response.status === 404) {
+      throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
+    }
     throw new Error(`arXiv request failed (${response.status} ${response.statusText}) for ${url}`);
   }
   return new Uint8Array(await response.arrayBuffer());

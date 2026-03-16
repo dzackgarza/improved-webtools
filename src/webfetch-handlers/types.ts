@@ -28,3 +28,10 @@ export type WebFetchDomainHandler = {
 export function hostMatchesDomain(hostname: string, domain: string): boolean {
   return hostname === domain || hostname.endsWith(`.${domain}`);
 }
+
+export class ResourceNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ResourceNotFoundError";
+  }
+}

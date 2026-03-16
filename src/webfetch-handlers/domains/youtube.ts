@@ -1,4 +1,4 @@
-import { hostMatchesDomain, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
+import { ResourceNotFoundError, hostMatchesDomain, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
 
 export const YOUTUBE_DOMAINS = [
   "youtube.com",
@@ -95,6 +95,10 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
   try {
     const listSubs = await input.runCommand(buildYtDlpCommand(["--list-subs", sourceUrl.toString()]));
     if (listSubs.exitCode !== 0) {
+      const stderrText = listSubs.stderrText.trim();
+      if (stderrText.includes("HTTP Error 404") || stderrText.includes("Video unavailable")) {
+        throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
+      }
       return {
         routeName: "youtube",
         sourceUrl: sourceUrl.toString(),
@@ -102,7 +106,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
           "# YouTube Transcript",
           "",
           "Transcript extraction failed at subtitle discovery.",
-          `Reason: ${listSubs.stderrText.trim() || `yt-dlp exited ${listSubs.exitCode}`}`,
+          `Reason: ${stderrText || `yt-dlp exited ${listSubs.exitCode}`}`,
           "",
           "Pipeline requirements:",
           "- yt-dlp with curl-cffi impersonation support.",

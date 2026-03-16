@@ -1,4 +1,4 @@
-import type { CommandExecutionResult, RunCommand, WebFetchHandlerResult } from "../types.ts";
+import { ResourceNotFoundError, type CommandExecutionResult, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
 
 export const REDDIT_DOMAINS = ["reddit.com", "www.reddit.com", "old.reddit.com", "api.reddit.com"] as const;
 
@@ -166,7 +166,11 @@ export async function fetchRedditPostMarkdown(input: {
       inputPath,
     ]);
     if (result.exitCode !== 0) {
-      throw new Error(`apify call failed (exit ${result.exitCode}): ${result.stderrText.trim()}`);
+      const stderrText = result.stderrText.trim();
+      if (stderrText.includes("HTTP 404") || stderrText.includes("Not Found")) {
+        throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
+      }
+      throw new Error(`apify call failed (exit ${result.exitCode}): ${stderrText}`);
     }
 
     let items: RedditRecord[];
@@ -184,7 +188,7 @@ export async function fetchRedditPostMarkdown(input: {
       .filter((item) => item.record_type === "post")
       .find((item) => String(item.permalink ?? "").includes(`/comments/${postRef.postId}/`));
     if (!postMatch) {
-      throw new Error(`no Reddit post match for permalink id ${postRef.postId}`);
+      throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
     }
 
     const targetPostId = normalizeRedditId(postMatch.post_id) || postRef.postId;

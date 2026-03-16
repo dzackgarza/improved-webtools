@@ -16,6 +16,7 @@ import {
   type WebFetchHandlerResult,
   WIKIPEDIA_DOMAINS,
   YOUTUBE_DOMAINS,
+  ResourceNotFoundError,
 } from "./webfetch-handlers/index.ts";
 import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
 
@@ -891,6 +892,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                 ? await handler.handle({ url: parsed })
               : await (async () => {
                   const httpMetadata = await fetchHttpMetadata(parsed);
+                  if (httpMetadata.statusCode === 404) {
+                    throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
+                  }
                   if (isPdfContentType(httpMetadata.contentType)) {
                     const downloadResult = await downloadPdfToTemp(parsed);
                     if (downloadResult.exitCode !== 0) {
@@ -980,6 +984,14 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                 },
               },
             });
+
+            if (error instanceof ResourceNotFoundError) {
+              return [
+                `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
+                message,
+              ].join("\n");
+            }
+
             return [
               `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
               ISSUE_REPORTING_HINT,

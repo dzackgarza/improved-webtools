@@ -1,4 +1,4 @@
-import type { RunCommand, WebFetchHandlerResult } from "../types.ts";
+import { ResourceNotFoundError, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
 
 export const GITHUB_DOMAINS = ["github.com", "www.github.com"] as const;
 
@@ -112,7 +112,15 @@ export async function fetchGitHubContent(input: {
   const plan = buildGitHubCommandPlan(input.url);
   const result = await input.runCommand(plan.args);
   if (result.exitCode !== 0) {
-    throw new Error(`gh command failed (exit ${result.exitCode}): ${result.stderrText.trim()}`);
+    const stderrText = result.stderrText.trim();
+    if (
+      stderrText.includes("HTTP 404") ||
+      stderrText.includes("Could not resolve to a Repository") ||
+      stderrText.includes("Not Found")
+    ) {
+      throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
+    }
+    throw new Error(`gh command failed (exit ${result.exitCode}): ${stderrText}`);
   }
   return {
     routeName: "github",

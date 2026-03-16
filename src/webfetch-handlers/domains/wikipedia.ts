@@ -1,4 +1,4 @@
-import type { RunCommand, WebFetchHandlerResult } from "../types.ts";
+import { ResourceNotFoundError, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
 
 export const WIKIPEDIA_DOMAINS = ["wikipedia.org"] as const;
 
@@ -121,11 +121,17 @@ export async function fetchWikipediaMarkdown(input: {
     },
   });
   if (!response.ok) {
+    if (response.status === 404) {
+      throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
+    }
     throw new Error(`wikipedia parse API failed (${response.status} ${response.statusText}).`);
   }
 
   const payload = (await response.json()) as WikipediaParseApiResponse;
   if (payload.error) {
+    if (payload.error.code === "missingtitle") {
+      throw new ResourceNotFoundError("URL returned 404 — the resource does not exist, verify the URL is correct");
+    }
     throw new Error(`wikipedia parse API error (${payload.error.code ?? "unknown"}): ${payload.error.info ?? "unknown error"}`);
   }
 
