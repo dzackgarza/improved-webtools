@@ -1,8 +1,7 @@
 """
 FastMCP wrapper for improved-webtools webfetch and websearch.
 
-This server imports the existing TypeScript plugin tools and exposes them
-via the Model Context Protocol (MCP) without modifying any original code.
+This server invokes the standalone webtools-manager CLI via bunx.
 
 Usage:
     uv run fastmcp run server.py
@@ -13,10 +12,9 @@ import os
 import subprocess
 import sys
 import urllib.request
-from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
-from fastmcp import FastMCP, Context
+from fastmcp import Context, FastMCP
 from pydantic import Field
 
 # Server metadata
@@ -25,35 +23,29 @@ mcp = FastMCP(
     instructions="Web search and fetch via SearxNG. Read URLs or search web with category filters.",
 )
 
-# Resolve paths
-SERVER_DIR = Path(__file__).parent.resolve()
-PROJECT_ROOT = SERVER_DIR.parent
-MCP_SHIM = PROJECT_ROOT.parent / "opencode-plugin-mcp-shim" / "run-tool.ts"
-PLUGIN_ENTRY = PROJECT_ROOT / "src" / "index.ts"
+MANAGER_REPO = "git+file:///home/dzack/opencode-plugins/webtools-manager"
 
 
 def _run_tool(tool_name: str, args: dict) -> str:
-    """Execute a tool via bun run and return formatted output."""
+    """Execute a tool via bunx and return result."""
     cmd = [
-        "bun",
-        "--no-deps",
-        "run",
-        str(MCP_SHIM),
-        str(PLUGIN_ENTRY),
+        "bunx",
+        "--from",
+        MANAGER_REPO,
+        "webtools",
         tool_name,
         json.dumps(args),
     ]
 
     result = subprocess.run(
         cmd,
-        cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
 
     if result.returncode != 0:
-        return f"Error executing {tool_name}: {result.stderr}"
+        return f"Error executing {tool_name}: {result.stderr or result.stdout}"
 
     return result.stdout
 
@@ -70,17 +62,16 @@ async def webfetch(
     overwrite_cache: Annotated[
         bool, Field(description="Set to true to bypass cached results")
     ] = False,
-    ctx: Optional[Context] = None,
+    ctx: Context | None = None,
 ) -> str:
     """Use when you need to fetch a webpage URL as plain text. Handles GitHub, Reddit, YouTube, Wikipedia, and arXiv."""
     try:
         args = {"url": url}
         if overwrite_cache:
             args["overwrite_cache"] = True
-        result = _run_tool("webfetch", args)
-        return result
+        return _run_tool("webfetch", args)
     except subprocess.TimeoutExpired:
-        return f"Error: webfetch timeout (>30s) for URL: {url}"
+        return f"Error: webfetch timeout (>120s) for URL: {url}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -108,9 +99,9 @@ async def websearch(
         int, Field(description="Recency in days (1=day, 31=month, 365=year)")
     ] = 0,
     domains: Annotated[
-        Optional[list[str]], Field(description="Specific domains to limit search to")
+        list[str] | None, Field(description="Specific domains to limit search to")
     ] = None,
-    ctx: Optional[Context] = None,
+    ctx: Context | None = None,
 ) -> str:
     """Use when you need to search the web via SearxNG. Returns snippets with pagination support."""
     try:
@@ -126,10 +117,9 @@ async def websearch(
         if domains:
             args["domains"] = domains
 
-        result = _run_tool("websearch", args)
-        return result
+        return _run_tool("websearch", args)
     except subprocess.TimeoutExpired:
-        return f"Error: websearch timeout (>30s) for query: {query}"
+        return f"Error: websearch timeout (>120s) for query: {query}"
     except Exception as e:
         return f"Error: {str(e)}"
 
