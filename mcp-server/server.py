@@ -1,13 +1,12 @@
 """
 FastMCP wrapper for improved-webtools webfetch and websearch.
 
-This server invokes the standalone webtools-manager CLI via bunx.
+This server invokes the standalone webtools CLI via uvx.
 
 Usage:
     uv run fastmcp run server.py
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -23,19 +22,47 @@ mcp = FastMCP(
     instructions="Web search and fetch via SearxNG. Read URLs or search web with category filters.",
 )
 
-MANAGER_REPO = "git+file:///home/dzack/opencode-plugins/webtools-manager"
+MANAGER_REPO = "file:///home/dzack/opencode-plugins/clis/webtools"
 
 
 def _run_tool(tool_name: str, args: dict) -> str:
-    """Execute a tool via bunx and return result."""
-    cmd = [
-        "bunx",
-        "--from",
-        MANAGER_REPO,
-        "webtools",
-        tool_name,
-        json.dumps(args),
-    ]
+    """Execute a tool via uvx and return result."""
+    if tool_name == "websearch":
+        cmd = [
+            "uvx",
+            "--from",
+            MANAGER_REPO,
+            "webtools",
+            "websearch",
+            str(args["query"]),
+            *(["--category", str(args["category"])] if args.get("category") else []),
+            *(
+                ["--num-results", str(args["num_results"])]
+                if args.get("num_results") is not None
+                else []
+            ),
+            *(
+                ["--offset", str(args["offset"])]
+                if args.get("offset") is not None
+                else []
+            ),
+            *(
+                ["--recency", str(args["recency"])]
+                if args.get("recency") is not None
+                else []
+            ),
+            *sum((["--domains", domain] for domain in args.get("domains", [])), []),
+        ]
+    else:
+        cmd = [
+            "uvx",
+            "--from",
+            MANAGER_REPO,
+            "webtools",
+            "webfetch",
+            str(args["url"]),
+            *(["--overwrite-cache"] if args.get("overwrite_cache") else []),
+        ]
 
     result = subprocess.run(
         cmd,

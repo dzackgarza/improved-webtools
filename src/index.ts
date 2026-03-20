@@ -5,15 +5,38 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const CLI_TIMEOUT_MS = 120_000;
 const CLI_MAX_BUFFER = 16 * 1024 * 1024;
+const CLI_SPEC =
+  process.env.WEBTOOLS_CLI_SPEC ?? 'file:///home/dzack/opencode-plugins/clis/webtools';
 
 async function runWebtools(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<string> {
-  const cliGitRepo = 'git+file:///home/dzack/opencode-plugins/webtools-manager';
+  const commandArgs =
+    toolName === 'websearch'
+      ? [
+          'websearch',
+          String(args.query),
+          ...(args.category ? ['--category', String(args.category)] : []),
+          ...(args.num_results !== undefined
+            ? ['--num-results', String(args.num_results)]
+            : []),
+          ...(args.offset !== undefined ? ['--offset', String(args.offset)] : []),
+          ...(args.recency !== undefined ? ['--recency', String(args.recency)] : []),
+          ...((args.domains as string[] | undefined)?.flatMap((domain) => [
+            '--domains',
+            domain,
+          ]) ?? []),
+        ]
+      : [
+          'webfetch',
+          String(args.url),
+          ...(args.overwrite_cache ? ['--overwrite-cache'] : []),
+        ];
+
   const { stdout } = await execFileAsync(
-    'bunx',
-    ['--from', cliGitRepo, 'webtools', toolName, JSON.stringify(args)],
+    'uvx',
+    ['--from', CLI_SPEC, 'webtools', ...commandArgs],
     {
       timeout: CLI_TIMEOUT_MS,
       maxBuffer: CLI_MAX_BUFFER,

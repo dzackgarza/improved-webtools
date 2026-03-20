@@ -11,8 +11,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.2.20",
-    "js-tiktoken": "^1.0.21"
+    "@opencode-ai/plugin": "^1.2.20"
   },
   "module": "./src/index.ts",
   "version": "0.1.0",
