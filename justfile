@@ -15,10 +15,19 @@ install: justfile-hygiene
 typecheck: justfile-hygiene
   direnv exec "{{repo_root}}" bunx tsc --noEmit
 
-# Run integration tests via `opencode run` (no external server needed — each
-# test invocation is ephemeral). Tests read OPENCODE_CONFIG from env;
-# beforeAll builds a temp config pointing at the local src/index.ts plugin.
 test: justfile-hygiene
+  #!/usr/bin/env bash
+  set -euo pipefail
+  root_justfile="{{repo_root}}/../../justfile"
+
+  cleanup() {
+    just -f "$root_justfile" test-sandbox-down 2>/dev/null || true
+  }
+  trap cleanup EXIT
+
+  TEST_SANDBOX_CONFIG_JSON="{{repo_root}}/tests/integration/opencode.json" \
+    just -f "$root_justfile" test-sandbox-up
+  source "{{repo_root}}/../../.test-sandbox-env.sh"
   direnv exec "{{repo_root}}" bun test tests/integration
 
 check: justfile-hygiene typecheck test
