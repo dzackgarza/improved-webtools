@@ -28,7 +28,7 @@ test: justfile-hygiene
   TEST_SANDBOX_CONFIG_JSON="{{repo_root}}/tests/integration/opencode.json" \
     just -f "$root_justfile" test-sandbox-up
   source "{{repo_root}}/../../.test-sandbox-env.sh"
-  direnv exec "{{repo_root}}" bun test tests/integration
+  cd "{{repo_root}}" && bun test tests/integration
 
 check: justfile-hygiene typecheck test
 
