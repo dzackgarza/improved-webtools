@@ -6,7 +6,7 @@ const execFileAsync = promisify(execFile);
 const CLI_TIMEOUT_MS = 120_000;
 const CLI_MAX_BUFFER = 16 * 1024 * 1024;
 const CLI_SPEC =
-  process.env.WEBTOOLS_CLI_SPEC ?? 'file:///home/dzack/opencode-plugins/clis/webtools';
+  process.env.WEBTOOLS_CLI_SPEC ?? 'git+https://github.com/dzackgarza/webtools-manager.git';
 
 async function runWebtools(
   toolName: string,
