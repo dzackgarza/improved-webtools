@@ -6,8 +6,12 @@
   "agent": {
     "plugin-proof": {
       "permission": {
-        "webfetch": "allow"
-      }
+        "*": "deny",
+        "webfetch": "allow",
+        "websearch": "allow"
+      },
+      "description": "Integration test agent: call only the explicitly requested web tool and never substitute other tools.",
+      "prompt": "You are a plugin integration test harness. Call only the explicitly requested tool and do not substitute codesearch, bash, read, or any other tool. If the named tool is unavailable, reply with FAIL:PROOF_NOT_POSSIBLE."
     }
   }
 }

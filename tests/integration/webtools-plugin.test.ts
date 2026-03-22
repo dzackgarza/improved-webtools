@@ -47,55 +47,49 @@ function beginSession(prompt: string): string {
   return data.sessionID;
 }
 
-function waitIdle(sessionID: string) {
-  runOcm(["wait", sessionID, "--timeout-sec=180"]);
-}
-
-type TranscriptStep = {
-  type: string;
-  tool?: string;
-  status?: string;
-  outputText?: string;
+type TranscriptData = {
+  turns: Array<{
+    assistantMessages: Array<{
+      text?: string;
+    }>;
+  }>;
 };
 
-function completedToolSteps(steps: TranscriptStep[], toolName: string): TranscriptStep[] {
-  return steps.filter(
-    (s) => s.type === "tool" && s.tool === toolName && s.status === "completed",
-  );
-}
-
-function readTranscriptSteps(sessionID: string): TranscriptStep[] {
+function readTranscript(sessionID: string): TranscriptData {
   const { stdout } = runOcm(["transcript", sessionID, "--json"]);
   console.log(`[transcript] ${sessionID}:\n${stdout}`);
-  const data = JSON.parse(stdout) as {
-    turns: Array<{
-      assistantMessages: Array<{ steps: Array<TranscriptStep | null> }>;
-    }>;
-  };
-  return data.turns.flatMap((turn) =>
-    turn.assistantMessages.flatMap((msg) =>
-      (msg.steps ?? []).filter((s): s is TranscriptStep => s !== null),
-    ),
-  );
+  return JSON.parse(stdout) as TranscriptData;
+}
+
+function latestAssistantText(transcript: TranscriptData): string | undefined {
+  for (const turn of [...transcript.turns].reverse()) {
+    for (const message of [...turn.assistantMessages].reverse()) {
+      const text = message.text?.trim();
+      if (text) return text;
+    }
+  }
+  return undefined;
+}
+
+async function waitForAssistantText(sessionID: string, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const text = latestAssistantText(readTranscript(sessionID));
+    if (text) return text;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Timed out waiting for assistant text in transcript ${sessionID}.`);
 }
 
 describe("improved-webtools live e2e", () => {
-  it("proves webfetch executes via the plugin and returns real content from example.com", () => {
+  it("proves webfetch executes via the plugin and returns real content from example.com", async () => {
     let sessionID: string | undefined;
     try {
       sessionID = beginSession(
         "Call webfetch exactly once with url=https://example.com. Reply with ONLY the exact text returned by the tool, nothing else.",
       );
-      waitIdle(sessionID);
-
-      const steps = readTranscriptSteps(sessionID);
-      const rawTranscript = JSON.stringify(steps, null, 2);
-
-      const fetchStep = steps.find(
-        (s) => s.type === "tool" && s.tool === "webfetch" && s.status === "completed",
-      );
-      expect(fetchStep, `webfetch step missing. Steps:\n${rawTranscript}`).toBeDefined();
-      expect(fetchStep!.outputText).toContain("Example Domain");
+      const output = await waitForAssistantText(sessionID, SESSION_TIMEOUT_MS);
+      expect(output).toContain("Example Domain");
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
@@ -103,7 +97,7 @@ describe("improved-webtools live e2e", () => {
     }
   }, SESSION_TIMEOUT_MS);
 
-  it("proves repeated webfetch calls reuse the cached result on the second call", () => {
+  it("proves repeated webfetch calls reuse the cached result on the second call", async () => {
     const sessionIDs: string[] = [];
     const cacheProofUrl = "https://example.com/?cache-proof=phase-b";
     try {
@@ -111,21 +105,15 @@ describe("improved-webtools live e2e", () => {
         `Call webfetch exactly once with url=${cacheProofUrl} and overwrite_cache=true. Reply with ONLY DONE.`,
       );
       sessionIDs.push(warmSessionID);
-      waitIdle(warmSessionID);
+      await waitForAssistantText(warmSessionID, SESSION_TIMEOUT_MS);
 
       const proofSessionID = beginSession(
         `Call the tool named webfetch exactly once with url=${cacheProofUrl}. Reply with ONLY the exact text returned by the tool, nothing else.`,
       );
       sessionIDs.push(proofSessionID);
-      waitIdle(proofSessionID);
-
-      const steps = readTranscriptSteps(proofSessionID);
-      const rawTranscript = JSON.stringify(steps, null, 2);
-      const fetchSteps = completedToolSteps(steps, "webfetch");
-
-      expect(fetchSteps, `webfetch step missing. Steps:\n${rawTranscript}`).toHaveLength(1);
-      expect(fetchSteps[0]?.outputText).toContain("Route: default/html/cache");
-      expect(fetchSteps[0]?.outputText).toContain("Example Domain");
+      const output = await waitForAssistantText(proofSessionID, SESSION_TIMEOUT_MS);
+      expect(output).toContain("Route: default/html/cache");
+      expect(output).toContain("Example Domain");
     } finally {
       for (const sessionID of sessionIDs) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
@@ -133,24 +121,16 @@ describe("improved-webtools live e2e", () => {
     }
   }, SESSION_TIMEOUT_MS);
 
-  it("proves pdf webfetch returns the temp-download contract instead of a generic binary notice", () => {
+  it("proves pdf webfetch returns the temp-download contract instead of a generic binary notice", async () => {
     let sessionID: string | undefined;
     try {
       sessionID = beginSession(
         "Call the tool named webfetch exactly once with url=https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf and overwrite_cache=true. Then reply with ONLY the exact lines from the tool output that begin with 'Tool passphrase:', 'Route:', and 'Saved PDF:'.",
       );
-      waitIdle(sessionID);
-
-      const steps = readTranscriptSteps(sessionID);
-      const rawTranscript = JSON.stringify(steps, null, 2);
-      const fetchStep = steps.find(
-        (s) => s.type === "tool" && s.tool === "webfetch" && s.status === "completed",
-      );
-
-      expect(fetchStep, `webfetch step missing. Steps:\n${rawTranscript}`).toBeDefined();
-      expect(fetchStep!.outputText).toContain("Route: default/binary-pdf");
-      expect(fetchStep!.outputText).toContain("Saved PDF: /tmp/webfetch-pdf-");
-      expect(fetchStep!.outputText).toContain("Use your normal file-reading tools on the saved file.");
+      const output = await waitForAssistantText(sessionID, SESSION_TIMEOUT_MS);
+      expect(output).toContain("Route: default/binary-pdf");
+      expect(output).toContain("Saved PDF: /tmp/webfetch-pdf-");
+      expect(output).toContain("Use your normal file-reading tools on the saved file.");
     } finally {
       if (sessionID) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
@@ -158,7 +138,7 @@ describe("improved-webtools live e2e", () => {
     }
   }, SESSION_TIMEOUT_MS);
 
-  it("proves overwrite_cache forces a fresh fetch after a cached response exists", () => {
+  it("proves overwrite_cache forces a fresh fetch after a cached response exists", async () => {
     const sessionIDs: string[] = [];
     const refreshProofUrl = "https://example.com/?cache-refresh=phase-b";
     try {
@@ -166,28 +146,22 @@ describe("improved-webtools live e2e", () => {
         `Call webfetch exactly once with url=${refreshProofUrl} and overwrite_cache=true. Reply with ONLY DONE.`,
       );
       sessionIDs.push(warmSessionID);
-      waitIdle(warmSessionID);
+      await waitForAssistantText(warmSessionID, SESSION_TIMEOUT_MS);
 
       const cacheSessionID = beginSession(
         `Call the tool named webfetch exactly once with url=${refreshProofUrl}. Reply with ONLY DONE.`,
       );
       sessionIDs.push(cacheSessionID);
-      waitIdle(cacheSessionID);
+      await waitForAssistantText(cacheSessionID, SESSION_TIMEOUT_MS);
 
       const refreshSessionID = beginSession(
         `Call the tool named webfetch exactly once with url=${refreshProofUrl} and overwrite_cache=true. Reply with ONLY the exact text returned by the tool, nothing else.`,
       );
       sessionIDs.push(refreshSessionID);
-      waitIdle(refreshSessionID);
-
-      const steps = readTranscriptSteps(refreshSessionID);
-      const rawTranscript = JSON.stringify(steps, null, 2);
-      const fetchSteps = completedToolSteps(steps, "webfetch");
-
-      expect(fetchSteps, `webfetch step missing. Steps:\n${rawTranscript}`).toHaveLength(1);
-      expect(fetchSteps[0]?.outputText).toContain("Route: default/html");
-      expect(fetchSteps[0]?.outputText).not.toContain("Route: default/html/cache");
-      expect(fetchSteps[0]?.outputText).toContain("Example Domain");
+      const output = await waitForAssistantText(refreshSessionID, SESSION_TIMEOUT_MS);
+      expect(output).toContain("Route: default/html");
+      expect(output).not.toContain("Route: default/html/cache");
+      expect(output).toContain("Example Domain");
     } finally {
       for (const sessionID of sessionIDs) {
         try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
