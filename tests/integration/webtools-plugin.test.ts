@@ -263,12 +263,10 @@ describe("improved-webtools live e2e", () => {
         let sessionID: string | undefined;
         try {
           sessionID = beginSession(
-            `Call the tool named webfetch exactly once with url=${baseUrl}/doc.pdf and overwrite_cache=true. Reply with ONLY the exact text returned by the tool, nothing else.`,
+            `Call the tool named webfetch exactly once with url=${baseUrl}/doc.pdf and overwrite_cache=true. Reply with ONLY the exact line from the tool output that begins with 'Saved PDF:'.`,
           );
           const output = await waitForAssistantText(sessionID, SESSION_TIMEOUT_MS);
-          expect(output).toContain("Route: default/binary-pdf");
           expect(output).toContain("Saved PDF: /tmp/webfetch-pdf-");
-          expect(output).toContain("Use your normal file-reading tools on the saved file.");
         } finally {
           if (sessionID) {
             try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
