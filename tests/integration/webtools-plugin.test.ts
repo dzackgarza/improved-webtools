@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -97,6 +98,48 @@ function beginSession(prompt: string): string {
   return data.sessionID;
 }
 
+type RouteHandler = (count: number) => {
+  body: Buffer | string;
+  headers: Record<string, string>;
+  status?: number;
+};
+
+async function withFixtureServer<T>(
+  routes: Record<string, RouteHandler>,
+  callback: (baseUrl: string, counts: Map<string, number>) => Promise<T>,
+): Promise<T> {
+  const counts = new Map<string, number>();
+  const server = createServer((request, response) => {
+    const path = request.url ?? "/";
+    const count = (counts.get(path) ?? 0) + 1;
+    counts.set(path, count);
+    const handler = routes[path];
+    if (!handler) {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("not found");
+      return;
+    }
+    const result = handler(count);
+    response.writeHead(result.status ?? 200, result.headers);
+    response.end(result.body);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Fixture server did not expose a numeric port.");
+  }
+  try {
+    return await callback(`http://127.0.0.1:${address.port}`, counts);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
 type RawSessionMessage = {
   info?: {
     role?: string;
@@ -146,89 +189,136 @@ async function waitForAssistantText(sessionID: string, timeoutMs: number): Promi
 
 describe("improved-webtools live e2e", () => {
   it("proves webfetch executes via the plugin and returns real content from example.com", async () => {
-    let sessionID: string | undefined;
-    try {
-      sessionID = beginSession(
-        "Call webfetch exactly once with url=https://example.com. Reply with ONLY the exact text returned by the tool, nothing else.",
-      );
-      const output = await waitForAssistantText(sessionID, SESSION_TIMEOUT_MS);
-      expect(output).toContain("Example Domain");
-    } finally {
-      if (sessionID) {
-        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
-      }
-    }
+    await withFixtureServer(
+      {
+        "/html": () => ({
+          headers: { "content-type": "text/html; charset=utf-8" },
+          body: "<!doctype html><html><body><h1>Example Domain</h1></body></html>",
+        }),
+      },
+      async (baseUrl) => {
+        let sessionID: string | undefined;
+        try {
+          sessionID = beginSession(
+            `Call webfetch exactly once with url=${baseUrl}/html. Reply with ONLY the exact text returned by the tool, nothing else.`,
+          );
+          const output = await waitForAssistantText(sessionID, SESSION_TIMEOUT_MS);
+          expect(output).toContain("Route: default/html");
+          expect(output).toContain("Example Domain");
+        } finally {
+          if (sessionID) {
+            try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
+          }
+        }
+      },
+    );
   }, SESSION_TIMEOUT_MS);
 
   it("proves repeated webfetch calls reuse the cached result on the second call", async () => {
-    const sessionIDs: string[] = [];
-    const cacheProofUrl = "https://example.com/?cache-proof=phase-b";
-    try {
-      const warmSessionID = beginSession(
-        `Call webfetch exactly once with url=${cacheProofUrl} and overwrite_cache=true. Reply with ONLY DONE.`,
-      );
-      sessionIDs.push(warmSessionID);
-      await waitForAssistantText(warmSessionID, SESSION_TIMEOUT_MS);
+    await withFixtureServer(
+      {
+        "/cache": (count) => ({
+          headers: { "content-type": "text/html; charset=utf-8" },
+          body: `<!doctype html><html><body><h1>cache body ${count}</h1></body></html>`,
+        }),
+      },
+      async (baseUrl, counts) => {
+        const sessionIDs: string[] = [];
+        const cacheProofUrl = `${baseUrl}/cache`;
+        try {
+          const warmSessionID = beginSession(
+            `Call webfetch exactly once with url=${cacheProofUrl} and overwrite_cache=true. Reply with ONLY DONE.`,
+          );
+          sessionIDs.push(warmSessionID);
+          await waitForAssistantText(warmSessionID, SESSION_TIMEOUT_MS);
 
-      const proofSessionID = beginSession(
-        `Call the tool named webfetch exactly once with url=${cacheProofUrl}. Reply with ONLY the exact text returned by the tool, nothing else.`,
-      );
-      sessionIDs.push(proofSessionID);
-      const output = await waitForAssistantText(proofSessionID, SESSION_TIMEOUT_MS);
-      expect(output).toContain("Route: default/html/cache");
-      expect(output).toContain("Example Domain");
-    } finally {
-      for (const sessionID of sessionIDs) {
-        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
-      }
-    }
+          const proofSessionID = beginSession(
+            `Call the tool named webfetch exactly once with url=${cacheProofUrl}. Reply with ONLY the exact text returned by the tool, nothing else.`,
+          );
+          sessionIDs.push(proofSessionID);
+          const output = await waitForAssistantText(proofSessionID, SESSION_TIMEOUT_MS);
+          expect(output).toContain("Route: default/html/cache");
+          expect(output).toContain("cache body 1");
+          expect(counts.get("/cache")).toBe(1);
+        } finally {
+          for (const sessionID of sessionIDs) {
+            try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
+          }
+        }
+      },
+    );
   }, SESSION_TIMEOUT_MS);
 
   it("proves pdf webfetch returns the temp-download contract instead of a generic binary notice", async () => {
-    let sessionID: string | undefined;
-    try {
-      sessionID = beginSession(
-        "Call the tool named webfetch exactly once with url=https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf and overwrite_cache=true. Then reply with ONLY the exact lines from the tool output that begin with 'Tool passphrase:', 'Route:', and 'Saved PDF:'.",
-      );
-      const output = await waitForAssistantText(sessionID, SESSION_TIMEOUT_MS);
-      expect(output).toContain("Route: default/binary-pdf");
-      expect(output).toContain("Saved PDF: /tmp/webfetch-pdf-");
-      expect(output).toContain("Use your normal file-reading tools on the saved file.");
-    } finally {
-      if (sessionID) {
-        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
-      }
-    }
+    const pdfBytes = Buffer.from("%PDF-1.4\nfixture\n");
+    await withFixtureServer(
+      {
+        "/doc.pdf": () => ({
+          headers: {
+            "content-type": "application/pdf",
+            "content-length": String(pdfBytes.length),
+          },
+          body: pdfBytes,
+        }),
+      },
+      async (baseUrl) => {
+        let sessionID: string | undefined;
+        try {
+          sessionID = beginSession(
+            `Call the tool named webfetch exactly once with url=${baseUrl}/doc.pdf and overwrite_cache=true. Reply with ONLY the exact text returned by the tool, nothing else.`,
+          );
+          const output = await waitForAssistantText(sessionID, SESSION_TIMEOUT_MS);
+          expect(output).toContain("Route: default/binary-pdf");
+          expect(output).toContain("Saved PDF: /tmp/webfetch-pdf-");
+          expect(output).toContain("Use your normal file-reading tools on the saved file.");
+        } finally {
+          if (sessionID) {
+            try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
+          }
+        }
+      },
+    );
   }, SESSION_TIMEOUT_MS);
 
   it("proves overwrite_cache forces a fresh fetch after a cached response exists", async () => {
-    const sessionIDs: string[] = [];
-    const refreshProofUrl = "https://example.com/?cache-refresh=phase-b";
-    try {
-      const warmSessionID = beginSession(
-        `Call webfetch exactly once with url=${refreshProofUrl} and overwrite_cache=true. Reply with ONLY DONE.`,
-      );
-      sessionIDs.push(warmSessionID);
-      await waitForAssistantText(warmSessionID, SESSION_TIMEOUT_MS);
+    await withFixtureServer(
+      {
+        "/refresh": (count) => ({
+          headers: { "content-type": "text/html; charset=utf-8" },
+          body: `<!doctype html><html><body><h1>refresh body ${count}</h1></body></html>`,
+        }),
+      },
+      async (baseUrl, counts) => {
+        const sessionIDs: string[] = [];
+        const refreshProofUrl = `${baseUrl}/refresh`;
+        try {
+          const warmSessionID = beginSession(
+            `Call webfetch exactly once with url=${refreshProofUrl} and overwrite_cache=true. Reply with ONLY DONE.`,
+          );
+          sessionIDs.push(warmSessionID);
+          await waitForAssistantText(warmSessionID, SESSION_TIMEOUT_MS);
 
-      const cacheSessionID = beginSession(
-        `Call the tool named webfetch exactly once with url=${refreshProofUrl}. Reply with ONLY DONE.`,
-      );
-      sessionIDs.push(cacheSessionID);
-      await waitForAssistantText(cacheSessionID, SESSION_TIMEOUT_MS);
+          const cacheSessionID = beginSession(
+            `Call the tool named webfetch exactly once with url=${refreshProofUrl}. Reply with ONLY DONE.`,
+          );
+          sessionIDs.push(cacheSessionID);
+          await waitForAssistantText(cacheSessionID, SESSION_TIMEOUT_MS);
 
-      const refreshSessionID = beginSession(
-        `Call the tool named webfetch exactly once with url=${refreshProofUrl} and overwrite_cache=true. Reply with ONLY the exact text returned by the tool, nothing else.`,
-      );
-      sessionIDs.push(refreshSessionID);
-      const output = await waitForAssistantText(refreshSessionID, SESSION_TIMEOUT_MS);
-      expect(output).toContain("Route: default/html");
-      expect(output).not.toContain("Route: default/html/cache");
-      expect(output).toContain("Example Domain");
-    } finally {
-      for (const sessionID of sessionIDs) {
-        try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
-      }
-    }
+          const refreshSessionID = beginSession(
+            `Call the tool named webfetch exactly once with url=${refreshProofUrl} and overwrite_cache=true. Reply with ONLY the exact text returned by the tool, nothing else.`,
+          );
+          sessionIDs.push(refreshSessionID);
+          const output = await waitForAssistantText(refreshSessionID, SESSION_TIMEOUT_MS);
+          expect(output).toContain("Route: default/html");
+          expect(output).not.toContain("Route: default/html/cache");
+          expect(output).toContain("refresh body 2");
+          expect(counts.get("/refresh")).toBe(2);
+        } finally {
+          for (const sessionID of sessionIDs) {
+            try { runOcm(["delete", sessionID]); } catch { /* best-effort */ }
+          }
+        }
+      },
+    );
   }, SESSION_TIMEOUT_MS);
 });
