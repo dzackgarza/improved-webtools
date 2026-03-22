@@ -5,6 +5,7 @@
   ],
   "agent": {
     "plugin-proof": {
+      "model": "github-copilot/gpt-4.1",
       "permission": {
         "*": "deny",
         "webfetch": "allow",
