@@ -1,5 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -18,11 +21,44 @@ const MAX_BUFFER = 8 * 1024 * 1024;
 const SESSION_TIMEOUT_MS = 240_000;
 const AGENT_NAME = "plugin-proof";
 const PROJECT_DIR = process.cwd();
+const OCM_TOOL_DIR = mkdtempSync(join(tmpdir(), "ocm-tool-"));
+let ocmBinaryPath: string | undefined;
+
+afterAll(() => {
+  rmSync(OCM_TOOL_DIR, { recursive: true, force: true });
+});
+
+function getOcmBinaryPath(): string {
+  if (ocmBinaryPath) return ocmBinaryPath;
+  const binDir = process.platform === "win32" ? join(OCM_TOOL_DIR, "Scripts") : join(OCM_TOOL_DIR, "bin");
+  const candidate = join(binDir, process.platform === "win32" ? "ocm.exe" : "ocm");
+  if (!existsSync(candidate)) {
+    const install = spawnSync(
+      "uv",
+      ["tool", "install", "--tool-dir", OCM_TOOL_DIR, "--from", MANAGER_PACKAGE, "ocm"],
+      {
+        env: process.env,
+        cwd: PROJECT_DIR,
+        encoding: "utf8",
+        timeout: SESSION_TIMEOUT_MS,
+        maxBuffer: MAX_BUFFER,
+      },
+    );
+    if (install.error) throw install.error;
+    if (install.status !== 0 || !existsSync(candidate)) {
+      throw new Error(
+        `Failed to install ocm\nSTDOUT:\n${install.stdout ?? ""}\nSTDERR:\n${install.stderr ?? ""}`,
+      );
+    }
+  }
+  ocmBinaryPath = candidate;
+  return candidate;
+}
 
 function runOcm(args: string[]) {
   const result = spawnSync(
-    "uvx",
-    ["--from", MANAGER_PACKAGE, "ocm", ...args],
+    getOcmBinaryPath(),
+    args,
     {
       env: { ...process.env, OPENCODE_BASE_URL: BASE_URL },
       cwd: PROJECT_DIR,
@@ -47,38 +83,51 @@ function beginSession(prompt: string): string {
   return data.sessionID;
 }
 
-type TranscriptData = {
-  turns: Array<{
-    assistantMessages: Array<{
-      text?: string;
-    }>;
-  }>;
+type RawSessionMessage = {
+  info?: {
+    role?: string;
+  };
+  parts?: Array<{
+    type?: string;
+    text?: string;
+  } | null>;
 };
 
-function readTranscript(sessionID: string): TranscriptData {
-  const { stdout } = runOcm(["transcript", sessionID, "--json"]);
-  console.log(`[transcript] ${sessionID}:\n${stdout}`);
-  return JSON.parse(stdout) as TranscriptData;
+async function readRawSessionMessages(sessionID: string): Promise<RawSessionMessage[]> {
+  const response = await fetch(`${BASE_URL}/session/${sessionID}/message`);
+  if (!response.ok) {
+    throw new Error(`Failed to load session messages for ${sessionID}: ${response.status}`);
+  }
+  const data = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error(`Session messages for ${sessionID} were not an array.`);
+  }
+  return data as RawSessionMessage[];
 }
 
-function latestAssistantText(transcript: TranscriptData): string | undefined {
-  for (const turn of [...transcript.turns].reverse()) {
-    for (const message of [...turn.assistantMessages].reverse()) {
-      const text = message.text?.trim();
-      if (text) return text;
-    }
-  }
-  return undefined;
+function flattenMessageText(message: RawSessionMessage): string {
+  return (message.parts ?? [])
+    .filter(
+      (part): part is { type?: string; text?: string } =>
+        part !== null && typeof part === "object",
+    )
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text?.trim() ?? "")
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function waitForAssistantText(sessionID: string, timeoutMs: number): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const text = latestAssistantText(readTranscript(sessionID));
-    if (text) return text;
+    const match = (await readRawSessionMessages(sessionID))
+      .filter((message) => message.info?.role === "assistant")
+      .map(flattenMessageText)
+      .find((text) => text.length > 0);
+    if (match) return match;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`Timed out waiting for assistant text in transcript ${sessionID}.`);
+  throw new Error(`Timed out waiting for assistant text in session ${sessionID}.`);
 }
 
 describe("improved-webtools live e2e", () => {
