@@ -22,7 +22,10 @@ mcp = FastMCP(
     instructions="Web search and fetch via SearxNG. Read URLs or search web with category filters.",
 )
 
-MANAGER_REPO = "file:///home/dzack/opencode-plugins/clis/webtools"
+MANAGER_REPO = os.environ.get(
+    "WEBTOOLS_CLI_SPEC",
+    "git+https://github.com/dzackgarza/webtools-manager.git",
+)
 
 
 def _run_tool(tool_name: str, args: dict) -> str:

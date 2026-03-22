@@ -1,8 +1,9 @@
 {
   "name": "@dzackgarza/improved-webtools",
   "scripts": {
-    "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "test": "just --justfile justfile test",
+    "typecheck": "just --justfile justfile typecheck",
+    "check": "just --justfile justfile check"
   },
   "devDependencies": {
     "@types/bun": "latest"

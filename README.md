@@ -13,35 +13,21 @@ cd ./improved-webtools
 just install
 ```
 
-Register the plugin in OpenCode via `file:`:
+Register the published plugin in OpenCode:
 
 ```json
 {
   "plugin": [
-    "file:///path/to/improved-webtools/src/index.ts"
+    "@dzackgarza/improved-webtools@git+https://github.com/dzackgarza/improved-webtools.git"
   ]
 }
 ```
 
-Sample local configuration: [`improved-webtools/.config/opencode.json`](./.config/opencode.json)
+Repo-root [`opencode.json`](./opencode.json) is the canonical proof config for local and CI runs. CI starts `opencode serve` from the repo root and relies on standard global-plus-project config precedence.
 
-> [!WARNING]
-> Using `git+` with local git repositories (e.g., `git+file://`, local `git+ssh://`) is NOT supported and will not work. Always use the `file://` directive for local development.
-
-Default local mode is the real shadowing path:
+Default tool ids are the real shadowing path:
 - `webfetch`
 - `websearch`
-
-Manual debug mode exports non-shadowing aliases instead:
-- `webfetch_debug`
-- `websearch_debug`
-
-To enable debug mode locally:
-
-```bash
-export IMPROVED_WEBTOOLS_DEBUG_MODE="1"
-export OPENCODE_CONFIG="$PWD/.config/opencode.debug.json"
-```
 
 ### MCP Installation
 
@@ -115,13 +101,9 @@ exposed as `websearch_debug`.
 Run checks and tests:
 
 ```bash
+direnv allow .
 just typecheck
 just test
-just mcp-test
-just reddit-live-verify
-YTDLP_COOKIES_FILE=/abs/path/to/youtube.cookies just youtube-live-verify
 ```
 
-`just reddit-live-verify` runs the live Reddit handler against the configured Apify actor and proves the nested-comment render path without making the default Bun suite depend on live Apify access.
-
-`just youtube-live-verify` preflights `uvx`, `yt-dlp` via `uvx`, and `openai-whisper` via `uvx` before running a caption-backed TED proof, a no-subtitles Whisper proof, and an invalid-video failure check. On CPU-only hosts, the Whisper leg can take several minutes; set `YOUTUBE_VERIFY_TIMEOUT_MS` higher if it times out before transcription completes.
+CI is the canonical proof environment. For local debugging, start a repo-local OpenCode server from this checkout, set `OPENCODE_BASE_URL`, and then run the same `just` entrypoints.
