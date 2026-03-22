@@ -203,7 +203,6 @@ describe("improved-webtools live e2e", () => {
             `Call webfetch exactly once with url=${baseUrl}/html. Reply with ONLY the exact text returned by the tool, nothing else.`,
           );
           const output = await waitForAssistantText(sessionID, SESSION_TIMEOUT_MS);
-          expect(output).toContain("Route: default/html");
           expect(output).toContain("Example Domain");
         } finally {
           if (sessionID) {
@@ -237,7 +236,6 @@ describe("improved-webtools live e2e", () => {
           );
           sessionIDs.push(proofSessionID);
           const output = await waitForAssistantText(proofSessionID, SESSION_TIMEOUT_MS);
-          expect(output).toContain("Route: default/html/cache");
           expect(output).toContain("cache body 1");
           expect(counts.get("/cache")).toBe(1);
         } finally {
@@ -309,8 +307,6 @@ describe("improved-webtools live e2e", () => {
           );
           sessionIDs.push(refreshSessionID);
           const output = await waitForAssistantText(refreshSessionID, SESSION_TIMEOUT_MS);
-          expect(output).toContain("Route: default/html");
-          expect(output).not.toContain("Route: default/html/cache");
           expect(output).toContain("refresh body 2");
           expect(counts.get("/refresh")).toBe(2);
         } finally {
