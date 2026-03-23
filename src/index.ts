@@ -29,10 +29,9 @@ function buildWebsearchArgs(args: Record<string, unknown>): string[] {
   if (args.num_results !== undefined) result.push("--num-results", String(args.num_results));
   if (args.offset !== undefined) result.push("--offset", String(args.offset));
   if (args.recency !== undefined) result.push("--recency", String(args.recency));
-  const domains = args.domains as string[] | undefined;
-  if (domains !== undefined) {
-    for (const domain of domains) result.push("--domains", domain);
-  }
+  (args.domains as string[] | undefined)?.forEach((domain) =>
+    result.push("--domains", domain),
+  );
   return result;
 }
 
