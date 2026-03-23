@@ -63,8 +63,7 @@ function getOcmBinaryPath(): string {
       );
     }
   }
-  ocmBinaryPath = candidate;
-  return candidate;
+  return (ocmBinaryPath = candidate);
 }
 
 function runOcm(args: string[]) {

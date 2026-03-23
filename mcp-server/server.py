@@ -13,7 +13,7 @@ import sys
 import urllib.request
 from typing import Annotated
 
-from fastmcp import Context, FastMCP
+from fastmcp import FastMCP
 from pydantic import Field
 
 # Server metadata
@@ -92,7 +92,6 @@ async def webfetch(
     overwrite_cache: Annotated[
         bool, Field(description="Set to true to bypass cached results")
     ] = False,
-    ctx: Context | None = None,
 ) -> str:
     """Use when you need to fetch a webpage URL as plain text. Handles GitHub, Reddit, YouTube, Wikipedia, and arXiv."""
     try:
@@ -131,7 +130,6 @@ async def websearch(
     domains: Annotated[
         list[str] | None, Field(description="Specific domains to limit search to")
     ] = None,
-    ctx: Context | None = None,
 ) -> str:
     """Use when you need to search the web via SearxNG. Returns snippets with pagination support."""
     try:
