@@ -1,54 +1,39 @@
-import { type Plugin, tool } from '@opencode-ai/plugin';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { type Plugin, tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 const CLI_TIMEOUT_MS = 120_000;
 const CLI_MAX_BUFFER = 16 * 1024 * 1024;
 const CLI_SPEC =
-  process.env.WEBTOOLS_CLI_SPEC ?? 'git+https://github.com/dzackgarza/webtools-manager.git';
+  process.env.WEBTOOLS_CLI_SPEC ?? "git+https://github.com/dzackgarza/webtools-manager.git";
 
-async function runWebtools(
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<string> {
+async function runWebtools(toolName: string, args: Record<string, unknown>): Promise<string> {
   const commandArgs =
-    toolName === 'websearch'
+    toolName === "websearch"
       ? [
-          'websearch',
+          "websearch",
           String(args.query),
-          ...(args.category ? ['--category', String(args.category)] : []),
-          ...(args.num_results !== undefined
-            ? ['--num-results', String(args.num_results)]
-            : []),
-          ...(args.offset !== undefined ? ['--offset', String(args.offset)] : []),
-          ...(args.recency !== undefined ? ['--recency', String(args.recency)] : []),
-          ...((args.domains as string[] | undefined)?.flatMap((domain) => [
-            '--domains',
-            domain,
-          ]) ?? []),
+          ...(args.category ? ["--category", String(args.category)] : []),
+          ...(args.num_results !== undefined ? ["--num-results", String(args.num_results)] : []),
+          ...(args.offset !== undefined ? ["--offset", String(args.offset)] : []),
+          ...(args.recency !== undefined ? ["--recency", String(args.recency)] : []),
+          ...((args.domains as string[] | undefined)?.flatMap((domain) => ["--domains", domain]) ??
+            []),
         ]
-      : [
-          'webfetch',
-          String(args.url),
-          ...(args.overwrite_cache ? ['--overwrite-cache'] : []),
-        ];
+      : ["webfetch", String(args.url), ...(args.overwrite_cache ? ["--overwrite-cache"] : [])];
 
-  const { stdout } = await execFileAsync(
-    'uvx',
-    ['--from', CLI_SPEC, 'webtools', ...commandArgs],
-    {
-      timeout: CLI_TIMEOUT_MS,
-      maxBuffer: CLI_MAX_BUFFER,
-    },
-  );
+  const { stdout } = await execFileAsync("uvx", ["--from", CLI_SPEC, "webtools", ...commandArgs], {
+    timeout: CLI_TIMEOUT_MS,
+    maxBuffer: CLI_MAX_BUFFER,
+  });
   return stdout.trim();
 }
 
 export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
   const websearchTool = tool({
     description:
-      'Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.',
+      "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.",
     args: {
       query: tool.schema.string(),
       category: tool.schema.string().optional(),
@@ -59,9 +44,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     },
     async execute(args, context) {
       await context.ask({
-        permission: 'websearch',
+        permission: "websearch",
         patterns: [args.query],
-        always: ['*'],
+        always: ["*"],
         metadata: { query: args.query },
       });
 
@@ -71,14 +56,14 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       });
 
       try {
-        return await runWebtools('websearch', args);
+        return await runWebtools("websearch", args);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await client.app.log({
           body: {
-            service: 'web-search-plugin',
-            level: 'error',
-            message: 'websearch execution error',
+            service: "web-search-plugin",
+            level: "error",
+            message: "websearch execution error",
             extra: { query: args.query, error: message },
           },
         });
@@ -90,7 +75,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
   return {
     tool: {
       webfetch: tool({
-        description: 'Use when you need to read a webpage URL as plain text content.',
+        description: "Use when you need to read a webpage URL as plain text content.",
         args: {
           url: tool.schema.string(),
           overwrite_cache: tool.schema.boolean().optional(),
@@ -105,9 +90,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
           }
 
           await context.ask({
-            permission: 'webfetch',
+            permission: "webfetch",
             patterns: [parsed.toString()],
-            always: ['*'],
+            always: ["*"],
             metadata: { url: parsed.toString() },
           });
 
@@ -116,18 +101,18 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
           });
 
           try {
-            return await runWebtools('webfetch', args);
+            return await runWebtools("webfetch", args);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             await client.app.log({
               body: {
-                service: 'web-search-plugin',
-                level: 'error',
-                message: 'webfetch execution error',
+                service: "web-search-plugin",
+                level: "error",
+                message: "webfetch execution error",
                 extra: { url: parsed.toString(), error: message },
               },
             });
-            return 'Failed to fetch URL.';
+            return "Failed to fetch URL.";
           }
         },
       }),
