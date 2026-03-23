@@ -29,41 +29,45 @@ afterAll(() => {
   rmSync(OCM_TOOL_DIR, { recursive: true, force: true });
 });
 
+function installOcmToVenv(candidate: string, pythonBinary: string): void {
+  if (existsSync(candidate)) return;
+  const createVenv = spawnSync("uv", ["venv", OCM_TOOL_DIR], {
+    env: process.env,
+    cwd: PROJECT_DIR,
+    encoding: "utf8",
+    timeout: SESSION_TIMEOUT_MS,
+    maxBuffer: MAX_BUFFER,
+  });
+  if (createVenv.error) throw createVenv.error;
+  if (createVenv.status !== 0) {
+    throw new Error(
+      `Failed to create ocm venv\nSTDOUT:\n${createVenv.stdout ?? ""}\nSTDERR:\n${createVenv.stderr ?? ""}`,
+    );
+  }
+  const install = spawnSync("uv", ["pip", "install", "--python", pythonBinary, MANAGER_PACKAGE], {
+    env: process.env,
+    cwd: PROJECT_DIR,
+    encoding: "utf8",
+    timeout: SESSION_TIMEOUT_MS,
+    maxBuffer: MAX_BUFFER,
+  });
+  if (install.error) throw install.error;
+  if (install.status !== 0 || !existsSync(candidate)) {
+    throw new Error(
+      `Failed to install ocm\nSTDOUT:\n${install.stdout ?? ""}\nSTDERR:\n${install.stderr ?? ""}`,
+    );
+  }
+}
+
 function getOcmBinaryPath(): string {
   if (ocmBinaryPath) return ocmBinaryPath;
   const isWin = process.platform === "win32";
   const binDir = join(OCM_TOOL_DIR, isWin ? "Scripts" : "bin");
   const candidate = join(binDir, isWin ? "ocm.exe" : "ocm");
   const pythonBinary = join(binDir, isWin ? "python.exe" : "python");
-  if (!existsSync(candidate)) {
-    const createVenv = spawnSync("uv", ["venv", OCM_TOOL_DIR], {
-      env: process.env,
-      cwd: PROJECT_DIR,
-      encoding: "utf8",
-      timeout: SESSION_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER,
-    });
-    if (createVenv.error) throw createVenv.error;
-    if (createVenv.status !== 0) {
-      throw new Error(
-        `Failed to create ocm venv\nSTDOUT:\n${createVenv.stdout ?? ""}\nSTDERR:\n${createVenv.stderr ?? ""}`,
-      );
-    }
-    const install = spawnSync("uv", ["pip", "install", "--python", pythonBinary, MANAGER_PACKAGE], {
-      env: process.env,
-      cwd: PROJECT_DIR,
-      encoding: "utf8",
-      timeout: SESSION_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER,
-    });
-    if (install.error) throw install.error;
-    if (install.status !== 0 || !existsSync(candidate)) {
-      throw new Error(
-        `Failed to install ocm\nSTDOUT:\n${install.stdout ?? ""}\nSTDERR:\n${install.stderr ?? ""}`,
-      );
-    }
-  }
-  return (ocmBinaryPath = candidate);
+  installOcmToVenv(candidate, pythonBinary);
+  ocmBinaryPath = candidate;
+  return ocmBinaryPath;
 }
 
 function runOcm(args: string[]) {

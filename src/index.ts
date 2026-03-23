@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { type Plugin, tool } from "@opencode-ai/plugin";
+import { type Plugin, type PluginInput, type ToolContext, tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 const CLI_TIMEOUT_MS = 120_000;
@@ -23,8 +23,9 @@ const WEBSEARCH_DESCRIPTION = DEBUG_MODE
   ? "Debug alias for websearch — use only when verifying plugin loading without shadowing the built-in tool."
   : "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
 
-function pushOptional(result: string[], flag: string, value: unknown): void {
+function pushOptional(result: string[], flag: string, value: unknown): string[] {
   if (value !== undefined) result.push(flag, String(value));
+  return result;
 }
 
 function buildWebsearchArgs(args: Record<string, unknown>): string[] {
@@ -33,9 +34,7 @@ function buildWebsearchArgs(args: Record<string, unknown>): string[] {
   pushOptional(result, "--num-results", args.num_results);
   pushOptional(result, "--offset", args.offset);
   pushOptional(result, "--recency", args.recency);
-  for (const domain of (args.domains as string[] | undefined) ?? []) {
-    result.push("--domains", domain);
-  }
+  result.push(...((args.domains as string[]) ?? []).flatMap((d: string) => ["--domains", d]));
   return result;
 }
 
@@ -45,15 +44,14 @@ function buildWebfetchArgs(args: Record<string, unknown>): string[] {
   return result;
 }
 
-async function runWebtools(commandArgs: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("uvx", ["--from", CLI_SPEC, "webtools", ...commandArgs], {
+function runWebtools(commandArgs: string[]) {
+  return execFileAsync("uvx", ["--from", CLI_SPEC, "webtools", ...commandArgs], {
     timeout: CLI_TIMEOUT_MS,
     maxBuffer: CLI_MAX_BUFFER,
-  });
-  return stdout.trim();
+  }).then(({ stdout }) => stdout.trim());
 }
 
-export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
+export const ImprovedWebSearchPlugin: Plugin = async ({ client }: PluginInput) => {
   const websearchTool = tool({
     description: WEBSEARCH_DESCRIPTION,
     args: {
@@ -64,7 +62,17 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       recency: tool.schema.number().optional(),
       domains: tool.schema.array(tool.schema.string()).optional(),
     },
-    async execute(args, context) {
+    async execute(
+      args: {
+        query: string;
+        category?: string;
+        num_results?: number;
+        offset?: number;
+        recency?: number;
+        domains?: string[];
+      },
+      context: ToolContext,
+    ) {
       await context.ask({
         permission: "websearch",
         patterns: [args.query],
@@ -100,7 +108,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       url: tool.schema.string(),
       overwrite_cache: tool.schema.boolean().optional(),
     },
-    async execute(args, context) {
+    async execute(args: { url: string; overwrite_cache?: boolean }, context: ToolContext) {
       const rawUrl = args.url.trim();
       let parsed: URL;
       try {
