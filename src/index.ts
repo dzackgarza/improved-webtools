@@ -10,12 +10,13 @@ const CLI_SPEC =
 
 function buildWebsearchArgs(args: Record<string, unknown>): string[] {
   const result = ["websearch", String(args.query)];
-  if (args.category) result.push("--category", String(args.category));
+  if (args.category !== undefined && args.category !== null)
+    result.push("--category", String(args.category));
   if (args.num_results !== undefined) result.push("--num-results", String(args.num_results));
   if (args.offset !== undefined) result.push("--offset", String(args.offset));
   if (args.recency !== undefined) result.push("--recency", String(args.recency));
   const domains = args.domains as string[] | undefined;
-  if (domains) {
+  if (domains !== undefined) {
     for (const domain of domains) result.push("--domains", domain);
   }
   return result;
@@ -23,7 +24,7 @@ function buildWebsearchArgs(args: Record<string, unknown>): string[] {
 
 function buildWebfetchArgs(args: Record<string, unknown>): string[] {
   const result = ["webfetch", String(args.url)];
-  if (args.overwrite_cache) result.push("--overwrite-cache");
+  if (args.overwrite_cache === true) result.push("--overwrite-cache");
   return result;
 }
 
