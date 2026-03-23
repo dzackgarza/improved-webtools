@@ -45,22 +45,26 @@ function buildWebfetchArgs(args: Record<string, unknown>): string[] {
 
 const EXEC_OPTS = { timeout: CLI_TIMEOUT_MS, maxBuffer: CLI_MAX_BUFFER };
 
-function runWebtools(commandArgs: string[]): Promise<string> {
+function runWebtools(commandArgs: string[]) {
   return execFileAsync("uvx", ["--from", CLI_SPEC, "webtools", ...commandArgs], EXEC_OPTS).then(
     (r: { stdout: string }) => r.stdout.trim(),
   );
 }
 
 function parseHttpUrl(rawUrl: string): URL | string {
+  let parsed: URL | undefined;
   try {
-    const parsed = new URL(rawUrl);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      return "Invalid URL: only http and https schemes are supported.";
-    }
-    return parsed;
+    parsed = new URL(rawUrl);
   } catch {
+    // URL constructor throws on invalid syntax
+  }
+  if (parsed === undefined) {
     return `Invalid URL: ${JSON.stringify(rawUrl)}.`;
   }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return "Invalid URL: only http and https schemes are supported.";
+  }
+  return parsed;
 }
 
 export const ImprovedWebSearchPlugin: Plugin = ({ client }) => {
@@ -74,7 +78,17 @@ export const ImprovedWebSearchPlugin: Plugin = ({ client }) => {
       recency: tool.schema.number().optional(),
       domains: tool.schema.array(tool.schema.string()).optional(),
     },
-    execute(args, context) {
+    execute(
+      args: {
+        query: string;
+        category?: string;
+        num_results?: number;
+        offset?: number;
+        recency?: number;
+        domains?: string[];
+      },
+      context,
+    ) {
       return context
         .ask({
           permission: "websearch",
@@ -113,7 +127,7 @@ export const ImprovedWebSearchPlugin: Plugin = ({ client }) => {
       url: tool.schema.string(),
       overwrite_cache: tool.schema.boolean().optional(),
     },
-    execute(args, context) {
+    execute(args: { url: string; overwrite_cache?: boolean }, context) {
       const urlResult = parseHttpUrl(args.url.trim());
       if (typeof urlResult === "string") return Promise.resolve(urlResult);
       return context
