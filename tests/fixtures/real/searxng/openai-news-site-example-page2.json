@@ -1,1 +1,10 @@
-{"query": "openai (site:example.com)", "number_of_results": 0, "results": [], "answers": [], "corrections": [], "infoboxes": [], "suggestions": [], "unresponsive_engines": [["startpage news", "CAPTCHA"]]}
+{
+  "query": "openai (site:example.com)",
+  "number_of_results": 0,
+  "results": [],
+  "answers": [],
+  "corrections": [],
+  "infoboxes": [],
+  "suggestions": [],
+  "unresponsive_engines": [["startpage news", "CAPTCHA"]]
+}
