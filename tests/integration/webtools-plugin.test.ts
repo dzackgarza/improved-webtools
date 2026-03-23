@@ -59,14 +59,15 @@ function installOcmToVenv(candidate: string, pythonBinary: string): void {
   }
 }
 
+const IS_WIN = process.platform === "win32";
+const OCM_BIN_DIR = join(OCM_TOOL_DIR, IS_WIN ? "Scripts" : "bin");
+const OCM_BIN = join(OCM_BIN_DIR, IS_WIN ? "ocm.exe" : "ocm");
+const PYTHON_BIN = join(OCM_BIN_DIR, IS_WIN ? "python.exe" : "python");
+
 function getOcmBinaryPath(): string {
   if (ocmBinaryPath) return ocmBinaryPath;
-  const isWin = process.platform === "win32";
-  const binDir = join(OCM_TOOL_DIR, isWin ? "Scripts" : "bin");
-  const candidate = join(binDir, isWin ? "ocm.exe" : "ocm");
-  const pythonBinary = join(binDir, isWin ? "python.exe" : "python");
-  installOcmToVenv(candidate, pythonBinary);
-  ocmBinaryPath = candidate;
+  installOcmToVenv(OCM_BIN, PYTHON_BIN);
+  ocmBinaryPath = OCM_BIN;
   return ocmBinaryPath;
 }
 

@@ -7,6 +7,7 @@ Usage:
     uv run fastmcp run server.py
 """
 
+import logging
 import os
 import subprocess
 import sys
@@ -14,6 +15,8 @@ import urllib.request
 from typing import Annotated
 
 from fastmcp import FastMCP
+
+logger = logging.getLogger(__name__)
 from pydantic import Field
 
 # Server metadata
@@ -156,10 +159,7 @@ def main() -> None:
     # 1. Check Env Var
     url = os.environ.get("SEARXNG_INSTANCE_URL")
     if not url:
-        print(
-            "CRITICAL: SEARXNG_INSTANCE_URL is not set. MCP server cannot start.",
-            file=sys.stderr,
-        )
+        logger.critical("SEARXNG_INSTANCE_URL is not set. MCP server cannot start.")
         sys.exit(1)
 
     # 2. Blocking Health Check
@@ -169,10 +169,7 @@ def main() -> None:
             if response.getcode() >= 400:
                 raise Exception(f"HTTP {response.getcode()}")
     except Exception as e:
-        print(
-            f"CRITICAL: SearxNG instance at {url} is unreachable: {e}",
-            file=sys.stderr,
-        )
+        logger.critical("SearxNG instance at %s is unreachable: %s", url, e)
         sys.exit(1)
 
     mcp.run()
