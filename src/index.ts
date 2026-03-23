@@ -8,21 +8,27 @@ const CLI_MAX_BUFFER = 16 * 1024 * 1024;
 const CLI_SPEC =
   process.env.WEBTOOLS_CLI_SPEC ?? "git+https://github.com/dzackgarza/webtools-manager.git";
 
-async function runWebtools(toolName: string, args: Record<string, unknown>): Promise<string> {
-  const commandArgs =
-    toolName === "websearch"
-      ? [
-          "websearch",
-          String(args.query),
-          ...(args.category ? ["--category", String(args.category)] : []),
-          ...(args.num_results !== undefined ? ["--num-results", String(args.num_results)] : []),
-          ...(args.offset !== undefined ? ["--offset", String(args.offset)] : []),
-          ...(args.recency !== undefined ? ["--recency", String(args.recency)] : []),
-          ...((args.domains as string[] | undefined)?.flatMap((domain) => ["--domains", domain]) ??
-            []),
-        ]
-      : ["webfetch", String(args.url), ...(args.overwrite_cache ? ["--overwrite-cache"] : [])];
+function buildWebsearchArgs(args: Record<string, unknown>): string[] {
+  const result = ["websearch", String(args.query)];
+  if (args.category) result.push("--category", String(args.category));
+  if (args.num_results !== undefined) result.push("--num-results", String(args.num_results));
+  if (args.offset !== undefined) result.push("--offset", String(args.offset));
+  if (args.recency !== undefined) result.push("--recency", String(args.recency));
+  const domains = args.domains as string[] | undefined;
+  if (domains) {
+    for (const domain of domains) result.push("--domains", domain);
+  }
+  return result;
+}
 
+function buildWebfetchArgs(args: Record<string, unknown>): string[] {
+  const result = ["webfetch", String(args.url)];
+  if (args.overwrite_cache) result.push("--overwrite-cache");
+  return result;
+}
+
+async function runWebtools(toolName: string, args: Record<string, unknown>): Promise<string> {
+  const commandArgs = toolName === "websearch" ? buildWebsearchArgs(args) : buildWebfetchArgs(args);
   const { stdout } = await execFileAsync("uvx", ["--from", CLI_SPEC, "webtools", ...commandArgs], {
     timeout: CLI_TIMEOUT_MS,
     maxBuffer: CLI_MAX_BUFFER,
