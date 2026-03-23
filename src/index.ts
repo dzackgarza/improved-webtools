@@ -23,12 +23,16 @@ const WEBSEARCH_DESCRIPTION = DEBUG_MODE
   ? "Debug alias for websearch — use only when verifying plugin loading without shadowing the built-in tool."
   : "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
 
+function pushOptional(result: string[], flag: string, value: unknown): void {
+  if (value !== undefined) result.push(flag, String(value));
+}
+
 function buildWebsearchArgs(args: Record<string, unknown>): string[] {
   const result = ["websearch", String(args.query)];
   if (args.category != null) result.push("--category", String(args.category));
-  if (args.num_results !== undefined) result.push("--num-results", String(args.num_results));
-  if (args.offset !== undefined) result.push("--offset", String(args.offset));
-  if (args.recency !== undefined) result.push("--recency", String(args.recency));
+  pushOptional(result, "--num-results", args.num_results);
+  pushOptional(result, "--offset", args.offset);
+  pushOptional(result, "--recency", args.recency);
   for (const domain of (args.domains as string[] | undefined) ?? []) {
     result.push("--domains", domain);
   }
