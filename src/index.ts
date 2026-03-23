@@ -29,7 +29,7 @@ function pushOptional(result: string[], flag: string, value: unknown): void {
 
 function buildWebsearchArgs(args: Record<string, unknown>): string[] {
   const result = ["websearch", String(args.query)];
-  if (args.category != null) result.push("--category", String(args.category));
+  if (args.category !== undefined) result.push("--category", String(args.category));
   pushOptional(result, "--num-results", args.num_results);
   pushOptional(result, "--offset", args.offset);
   pushOptional(result, "--recency", args.recency);

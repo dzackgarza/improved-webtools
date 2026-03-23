@@ -31,10 +31,10 @@ afterAll(() => {
 
 function getOcmBinaryPath(): string {
   if (ocmBinaryPath) return ocmBinaryPath;
-  const binDir =
-    process.platform === "win32" ? join(OCM_TOOL_DIR, "Scripts") : join(OCM_TOOL_DIR, "bin");
-  const candidate = join(binDir, process.platform === "win32" ? "ocm.exe" : "ocm");
-  const pythonBinary = join(binDir, process.platform === "win32" ? "python.exe" : "python");
+  const isWin = process.platform === "win32";
+  const binDir = join(OCM_TOOL_DIR, isWin ? "Scripts" : "bin");
+  const candidate = join(binDir, isWin ? "ocm.exe" : "ocm");
+  const pythonBinary = join(binDir, isWin ? "python.exe" : "python");
   if (!existsSync(candidate)) {
     const createVenv = spawnSync("uv", ["venv", OCM_TOOL_DIR], {
       env: process.env,
