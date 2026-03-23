@@ -1,6 +1,6 @@
 set fallback := true
 repo_root := justfile_directory()
-bun_qc_justfile := env_var_or_default("OPENCODE_BUN_QC_JUSTFILE", "/home/dzack/ai/quality-control/justfile-bun")
+bun_qc_justfile := env_var("OPENCODE_BUN_QC_JUSTFILE")
 
 default:
   @just test

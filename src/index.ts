@@ -8,6 +8,21 @@ const CLI_MAX_BUFFER = 16 * 1024 * 1024;
 const CLI_SPEC =
   process.env.WEBTOOLS_CLI_SPEC ?? "git+https://github.com/dzackgarza/webtools-manager.git";
 
+function envFlagEnabled(value?: string): boolean {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+const DEBUG_MODE = envFlagEnabled(process.env.IMPROVED_WEBTOOLS_DEBUG_MODE);
+const WEBFETCH_TOOL_ID = DEBUG_MODE ? "webfetch_debug" : "webfetch";
+const WEBSEARCH_TOOL_ID = DEBUG_MODE ? "websearch_debug" : "websearch";
+const WEBFETCH_DESCRIPTION = DEBUG_MODE
+  ? "Debug alias for webfetch — use only when verifying plugin loading without shadowing the built-in tool."
+  : "Use when you need to read a webpage URL as plain text content.";
+const WEBSEARCH_DESCRIPTION = DEBUG_MODE
+  ? "Debug alias for websearch — use only when verifying plugin loading without shadowing the built-in tool."
+  : "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
+
 function buildWebsearchArgs(args: Record<string, unknown>): string[] {
   const result = ["websearch", String(args.query)];
   if (args.category !== undefined && args.category !== null)
@@ -39,8 +54,7 @@ async function runWebtools(toolName: string, args: Record<string, unknown>): Pro
 
 export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
   const websearchTool = tool({
-    description:
-      "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.",
+    description: WEBSEARCH_DESCRIPTION,
     args: {
       query: tool.schema.string(),
       category: tool.schema.string().optional(),
@@ -79,51 +93,57 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     },
   });
 
+  const webfetchTool = tool({
+    description: WEBFETCH_DESCRIPTION,
+    args: {
+      url: tool.schema.string(),
+      overwrite_cache: tool.schema.boolean().optional(),
+    },
+    async execute(args, context) {
+      const rawUrl = args.url.trim();
+      let parsed: URL;
+      try {
+        parsed = new URL(rawUrl);
+      } catch {
+        return `Invalid URL: ${JSON.stringify(args.url)}.`;
+      }
+
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        return `Invalid URL: only http and https schemes are supported.`;
+      }
+
+      await context.ask({
+        permission: "webfetch",
+        patterns: [parsed.toString()],
+        always: ["*"],
+        metadata: { url: parsed.toString() },
+      });
+
+      context.metadata({
+        title: `Web fetch: ${parsed.hostname}${parsed.pathname}`.slice(0, 120),
+      });
+
+      try {
+        return await runWebtools("webfetch", args);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await client.app.log({
+          body: {
+            service: "web-search-plugin",
+            level: "error",
+            message: "webfetch execution error",
+            extra: { url: parsed.toString(), error: message },
+          },
+        });
+        return "Failed to fetch URL.";
+      }
+    },
+  });
+
   return {
     tool: {
-      webfetch: tool({
-        description: "Use when you need to read a webpage URL as plain text content.",
-        args: {
-          url: tool.schema.string(),
-          overwrite_cache: tool.schema.boolean().optional(),
-        },
-        async execute(args, context) {
-          const rawUrl = args.url.trim();
-          let parsed: URL;
-          try {
-            parsed = new URL(rawUrl);
-          } catch {
-            return `Invalid URL: ${JSON.stringify(args.url)}.`;
-          }
-
-          await context.ask({
-            permission: "webfetch",
-            patterns: [parsed.toString()],
-            always: ["*"],
-            metadata: { url: parsed.toString() },
-          });
-
-          context.metadata({
-            title: `Web fetch: ${parsed.hostname}${parsed.pathname}`.slice(0, 120),
-          });
-
-          try {
-            return await runWebtools("webfetch", args);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            await client.app.log({
-              body: {
-                service: "web-search-plugin",
-                level: "error",
-                message: "webfetch execution error",
-                extra: { url: parsed.toString(), error: message },
-              },
-            });
-            return "Failed to fetch URL.";
-          }
-        },
-      }),
-      websearch: websearchTool,
+      [WEBFETCH_TOOL_ID]: webfetchTool,
+      [WEBSEARCH_TOOL_ID]: websearchTool,
     },
   };
 };
