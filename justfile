@@ -26,6 +26,7 @@ _quality-control: justfile-hygiene
   set -euo pipefail
   just --justfile "{{bun_qc_justfile}}" --working-directory "{{repo_root}}" _biome
   just --justfile "{{bun_qc_justfile}}" --working-directory "{{repo_root}}" _semgrep
+  just --justfile "{{bun_qc_justfile}}" --working-directory "{{repo_root}}" _eslint
   exec just --justfile "{{bun_qc_justfile}}" --working-directory "{{repo_root}}" _lizard
 
 [private]

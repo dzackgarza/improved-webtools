@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { setTimeout as delayMs } from "node:timers/promises";
 import { promisify } from "node:util";
 import { type Plugin, tool } from "@opencode-ai/plugin";
 
@@ -52,19 +53,21 @@ function runWebtools(commandArgs: string[]) {
 }
 
 function parseHttpUrl(rawUrl: string): URL | string {
-  let parsed: URL | undefined;
+  // Initialize to rawUrl (a string) so the variable is never undefined.
+  // After the try block, string means parse failed; URL means it succeeded.
+  let parseResult: URL | string = rawUrl;
   try {
-    parsed = new URL(rawUrl);
+    parseResult = new URL(rawUrl);
   } catch {
-    // URL constructor throws on invalid syntax
+    // URL constructor throws on invalid syntax; parseResult stays as rawUrl string
   }
-  if (parsed === undefined) {
+  if (typeof parseResult === "string") {
     return `Invalid URL: ${JSON.stringify(rawUrl)}.`;
   }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+  if (parseResult.protocol !== "https:" && parseResult.protocol !== "http:") {
     return "Invalid URL: only http and https schemes are supported.";
   }
-  return parsed;
+  return parseResult;
 }
 
 export const ImprovedWebSearchPlugin: Plugin = ({ client }) => {
@@ -129,7 +132,7 @@ export const ImprovedWebSearchPlugin: Plugin = ({ client }) => {
     },
     execute(args: { url: string; overwrite_cache?: boolean }, context) {
       const urlResult = parseHttpUrl(args.url.trim());
-      if (typeof urlResult === "string") return Promise.resolve(urlResult);
+      if (typeof urlResult === "string") return delayMs(0).then(() => urlResult);
       return context
         .ask({
           permission: "webfetch",
@@ -161,12 +164,12 @@ export const ImprovedWebSearchPlugin: Plugin = ({ client }) => {
     },
   });
 
-  return Promise.resolve({
+  return delayMs(0).then(() => ({
     tool: {
       [WEBFETCH_TOOL_ID]: webfetchTool,
       [WEBSEARCH_TOOL_ID]: websearchTool,
     },
-  });
+  }));
 };
 
 export const SearxngSearchPlugin = ImprovedWebSearchPlugin;
