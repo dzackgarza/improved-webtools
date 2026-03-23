@@ -25,7 +25,7 @@ const WEBSEARCH_DESCRIPTION = DEBUG_MODE
 
 function buildWebsearchArgs(args: Record<string, unknown>): string[] {
   const result = ["websearch", String(args.query)];
-  if (args.category !== undefined && args.category !== null)
+  if (args.category != null)
     result.push("--category", String(args.category));
   if (args.num_results !== undefined) result.push("--num-results", String(args.num_results));
   if (args.offset !== undefined) result.push("--offset", String(args.offset));
