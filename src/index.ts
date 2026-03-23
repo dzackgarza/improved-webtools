@@ -29,9 +29,9 @@ function buildWebsearchArgs(args: Record<string, unknown>): string[] {
   if (args.num_results !== undefined) result.push("--num-results", String(args.num_results));
   if (args.offset !== undefined) result.push("--offset", String(args.offset));
   if (args.recency !== undefined) result.push("--recency", String(args.recency));
-  (args.domains as string[] | undefined)?.forEach(
-    (domain) => void result.push("--domains", domain),
-  );
+  for (const domain of (args.domains as string[] | undefined) ?? []) {
+    result.push("--domains", domain);
+  }
   return result;
 }
 
@@ -41,8 +41,7 @@ function buildWebfetchArgs(args: Record<string, unknown>): string[] {
   return result;
 }
 
-async function runWebtools(toolName: string, args: Record<string, unknown>): Promise<string> {
-  const commandArgs = toolName === "websearch" ? buildWebsearchArgs(args) : buildWebfetchArgs(args);
+async function runWebtools(commandArgs: string[]): Promise<string> {
   const { stdout } = await execFileAsync("uvx", ["--from", CLI_SPEC, "webtools", ...commandArgs], {
     timeout: CLI_TIMEOUT_MS,
     maxBuffer: CLI_MAX_BUFFER,
@@ -75,7 +74,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       });
 
       try {
-        return await runWebtools("websearch", args);
+        return await runWebtools(buildWebsearchArgs(args));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await client.app.log({
@@ -122,7 +121,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       });
 
       try {
-        return await runWebtools("webfetch", args);
+        return await runWebtools(buildWebfetchArgs(args));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await client.app.log({
