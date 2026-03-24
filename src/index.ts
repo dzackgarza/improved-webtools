@@ -24,24 +24,32 @@ const WEBSEARCH_DESCRIPTION = DEBUG_MODE
   ? "Debug alias for websearch — use only when verifying plugin loading without shadowing the built-in tool."
   : "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
 
-function buildWebsearchArgs(args: Record<string, unknown>): string[] {
-  const result = ["websearch", String(args.query)];
-  if (args.category !== undefined) result.push("--category", String(args.category));
+type WebsearchArgs = {
+  query: string;
+  category?: string;
+  num_results?: number;
+  offset?: number;
+  recency?: number;
+  domains?: string[];
+};
+
+type WebfetchArgs = {
+  url: string;
+  overwrite_cache?: boolean;
+};
+
+function buildWebsearchArgs(args: WebsearchArgs): string[] {
+  const result = ["websearch", args.query];
+  if (args.category !== undefined) result.push("--category", args.category);
   if (args.num_results !== undefined) result.push("--num-results", String(args.num_results));
   if (args.offset !== undefined) result.push("--offset", String(args.offset));
   if (args.recency !== undefined) result.push("--recency", String(args.recency));
-  result.push(
-    ...((args.domains as string[] | undefined) ?? []).flatMap((d: string) => ["--domains", d]),
-  );
+  result.push(...(args.domains ?? []).flatMap((d: string) => ["--domains", d]));
   return result;
 }
 
-function buildWebfetchArgs(args: Record<string, unknown>): string[] {
-  return [
-    "webfetch",
-    String(args.url),
-    ...(args.overwrite_cache === true ? ["--overwrite-cache"] : []),
-  ];
+function buildWebfetchArgs(args: WebfetchArgs): string[] {
+  return ["webfetch", args.url, ...(args.overwrite_cache === true ? ["--overwrite-cache"] : [])];
 }
 
 const EXEC_OPTS = { timeout: CLI_TIMEOUT_MS, maxBuffer: CLI_MAX_BUFFER };
@@ -104,7 +112,7 @@ export const ImprovedWebSearchPlugin: Plugin = ({ client }) => {
             title: `Web search: ${args.query.slice(0, 72)}`,
             metadata: { num_results: args.num_results },
           });
-          return runWebtools(buildWebsearchArgs(args as Record<string, unknown>)).then(
+          return runWebtools(buildWebsearchArgs(args)).then(
             (result: string) => result,
             (rawError: unknown) => {
               const message = rawError instanceof Error ? rawError.message : String(rawError);
@@ -144,7 +152,7 @@ export const ImprovedWebSearchPlugin: Plugin = ({ client }) => {
           context.metadata({
             title: `Web fetch: ${urlResult.hostname}${urlResult.pathname}`.slice(0, 120),
           });
-          return runWebtools(buildWebfetchArgs(args as Record<string, unknown>)).then(
+          return runWebtools(buildWebfetchArgs(args)).then(
             (result: string) => result,
             (rawError: unknown) => {
               const message = rawError instanceof Error ? rawError.message : String(rawError);
