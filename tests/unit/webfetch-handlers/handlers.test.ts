@@ -175,6 +175,9 @@ describe("webfetch handler modules", () => {
       url: new URL("https://youtu.be/dQw4w9WgXcQ"),
       runCommand: async (args) => {
         calls.push(args);
+        if (args[0] === "sh" && args[1] === "-lc") {
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
 
         if (args.includes("--list-subs")) {
           return { stdoutText: listSubs, stderrText: "", exitCode: 0 };
@@ -200,6 +203,7 @@ describe("webfetch handler modules", () => {
     expect(calls.some((args) => args.includes("--write-subs"))).toBe(true);
     expect(output.routeName).toBe("youtube");
     expect(output.content).toContain("We're no strangers to");
+    expect(output.content).toContain("00:00:18.800 We're no strangers to");
   });
 
   it("passes an optional yt-dlp cookies file to youtube commands", async () => {
@@ -212,14 +216,22 @@ describe("webfetch handler modules", () => {
         url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
         runCommand: async (args) => {
           calls.push(args);
-          return { stdoutText: "", stderrText: "video unavailable", exitCode: 1 };
+          if (args[0] === "sh" && args[1] === "-lc") {
+            return { stdoutText: "", stderrText: "", exitCode: 0 };
+          }
+          return {
+            stdoutText: "",
+            stderrText: "video unavailable",
+            exitCode: 1,
+          };
         },
       });
 
-      expect(calls).toHaveLength(1);
-      expect(calls[0]).toContain("--cookies");
-      expect(calls[0]).toContain("/tmp/test-youtube-cookies.txt");
-      expect(calls[0]?.indexOf("--cookies")).toBeGreaterThan(calls[0]?.indexOf("yt-dlp") ?? -1);
+      expect(calls.length).toBeGreaterThan(1);
+      const commandCall = calls.find((args) => args.includes("--cookies"));
+      expect(commandCall).toBeDefined();
+      expect(commandCall).toContain("/tmp/test-youtube-cookies.txt");
+      expect(commandCall?.indexOf("--cookies")).toBeGreaterThan(commandCall?.indexOf("yt-dlp") ?? -1);
     } finally {
       if (originalCookiesFile === undefined) {
         delete process.env.YTDLP_COOKIES_FILE;
@@ -238,6 +250,9 @@ describe("webfetch handler modules", () => {
       url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
       runCommand: async (args) => {
         calls.push(args);
+        if (args[0] === "sh" && args[1] === "-lc") {
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
 
         if (args.includes("--list-subs")) {
           return { stdoutText: listSubs, stderrText: "", exitCode: 0 };
@@ -366,6 +381,9 @@ describe("webfetch handler modules", () => {
     const output = await fetchYoutubeTranscriptMarkdown({
       url: new URL("https://www.youtube.com/watch?v=8S0FDjFBj8o"),
       runCommand: async (args) => {
+        if (args[0] === "sh" && args[1] === "-lc") {
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
         if (args.includes("--list-subs")) {
           return { stdoutText: fixtureText("youtube/8S0FDjFBj8o.list-subs.out"), stderrText: botCheckError, exitCode: 1 };
         }
@@ -384,6 +402,9 @@ describe("webfetch handler modules", () => {
     const output = await fetchYoutubeTranscriptMarkdown({
       url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
       runCommand: async (args) => {
+        if (args[0] === "sh" && args[1] === "-lc") {
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
         if (args.includes("--list-subs")) {
           return { stdoutText: listSubs, stderrText: "", exitCode: 0 };
         }
@@ -400,6 +421,63 @@ describe("webfetch handler modules", () => {
     expect(output.routeName).toBe("youtube");
     expect(output.content).toContain("Transcript extraction failed at audio download stage.");
     expect(output.content).toContain("Reason:");
+  });
+
+  it("returns a dependency checklist when required tools are missing", async () => {
+    const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
+    const dependencyCalls: string[][] = [];
+
+    const output = await fetchYoutubeTranscriptMarkdown({
+      url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+      runCommand: async (args) => {
+        if (args[0] === "sh" && args[1] === "-lc") {
+          dependencyCalls.push(args);
+          return {
+            stdoutText: "",
+            stderrText: "",
+            exitCode: 1,
+          };
+        }
+        return { stdoutText: listSubs, stderrText: "", exitCode: 1 };
+      },
+    });
+
+    expect(output.routeName).toBe("youtube");
+    expect(output.content).toContain("Missing required dependencies:");
+    expect(output.content).toContain("uvx");
+    expect(output.content).toContain("ffmpeg");
+    expect(output.content).toContain("ffprobe");
+    expect(dependencyCalls.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("sanitizes cookies path from dependency and extractor failures", async () => {
+    const originalCookiesFile = process.env.YTDLP_COOKIES_FILE;
+    process.env.YTDLP_COOKIES_FILE = "/tmp/secret-cookie-path.txt";
+    const output = await fetchYoutubeTranscriptMarkdown({
+      url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+      runCommand: async (args) => {
+        if (args[0] === "sh" && args[1] === "-lc") {
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
+        if (args.includes("--list-subs")) {
+          return {
+            stdoutText: "",
+            stderrText: "Using cookies from /tmp/secret-cookie-path.txt",
+            exitCode: 1,
+          };
+        }
+        return { stdoutText: "", stderrText: "", exitCode: 0 };
+      },
+    });
+
+    expect(output.content).toContain("Transcript extraction failed at subtitle discovery.");
+    expect(output.content).toContain("Reason: Using cookies from [redacted-cookies-file]");
+    expect(output.content).not.toContain("/tmp/secret-cookie-path.txt");
+    if (originalCookiesFile === undefined) {
+      delete process.env.YTDLP_COOKIES_FILE;
+    } else {
+      process.env.YTDLP_COOKIES_FILE = originalCookiesFile;
+    }
   });
 
   it("throws for unsupported wikipedia URL shapes", async () => {
