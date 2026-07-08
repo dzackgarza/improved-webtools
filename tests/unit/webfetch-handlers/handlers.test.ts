@@ -8,6 +8,11 @@ import {
   buildGitHubCommandPlan,
   fetchGitHubContent,
   fetchRedditPostMarkdown,
+  fetchStackExchangeMarkdown,
+  fetchPackageRegistryMarkdown,
+  fetchHackerNewsItemMarkdown,
+  fetchHuggingFaceCardMarkdown,
+  fetchXPostMarkdown,
   fetchWikipediaMarkdown,
   fetchYoutubeTranscriptMarkdown,
 } from "@webfetch-handlers";
@@ -478,6 +483,301 @@ describe("webfetch handler modules", () => {
     } else {
       process.env.YTDLP_COOKIES_FILE = originalCookiesFile;
     }
+  });
+
+  it("fetches stackexchange question and top answers with accepted-marking fallback", async () => {
+    const stackExchangeQuestionResponse = {
+      items: [
+        {
+          question_id: 123,
+          title: "Why is this package useful?",
+          body: "<p>Explain the package design.</p>",
+          score: 72,
+          answer_count: 2,
+          accepted_answer_id: 999,
+          tags: ["typescript", "design"],
+        },
+      ],
+    };
+
+    const stackExchangeAnswersResponse = {
+      items: [
+        {
+          answer_id: 101,
+          score: 18,
+          is_accepted: false,
+          owner: { display_name: "alice" },
+          body: "<p>Use the <b>core APIs</b>.</p>",
+        },
+        {
+          answer_id: 999,
+          score: 3,
+          is_accepted: true,
+          owner: { display_name: "bob" },
+          body: "<p>Accepted answer with patch.</p>",
+        },
+      ],
+    };
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (input: string | URL) => {
+      const target = String(input);
+      if (target.includes("/2.3/questions/123") && !target.includes("/answers")) {
+        return new Response(JSON.stringify(stackExchangeQuestionResponse), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (target.includes("/answers")) {
+        return new Response(JSON.stringify(stackExchangeAnswersResponse), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const output = await fetchStackExchangeMarkdown({
+      url: new URL("https://stackoverflow.com/questions/123/why-is-this-package-useful"),
+    });
+    globalThis.fetch = originalFetch;
+
+    expect(output.routeName).toBe("stackexchange");
+    expect(output.content).toContain("# Stack Exchange: Why is this package useful?");
+    expect(output.content).toContain("Top answers / accepted");
+    expect(output.content).toContain("Answer 1 (top-voted)");
+    expect(output.content).toContain("Answer 2 (accepted)");
+    expect(output.content).toContain("Use the core APIs.");
+    expect(output.content).toContain("Accepted answer with patch.");
+    expect(output.content).toContain("alice");
+    expect(output.content).toContain("bob");
+  });
+
+  it("renders package metadata from npm, pypi, and crates registries", async () => {
+    const npmPayload = {
+      name: "@scope/example",
+      description: "Example package for tests",
+      "dist-tags": {
+        latest: "1.2.3",
+      },
+      time: {
+        "1.2.3": "2026-06-01T00:00:00.000Z",
+      },
+      versions: {
+        "1.2.3": {
+          description: "Example version",
+          dependencies: {
+            "left-pad": "^1.3.0",
+          },
+          readme: "# Example\n\nA tiny example package.",
+          license: "MIT",
+        },
+      },
+      author: "Alice Example",
+    };
+
+    const pypiPayload = {
+      info: {
+        name: "requests",
+        version: "2.32.3",
+        summary: "HTTP for humans",
+        requires_dist: ["charset_normalizer", "idna (>=3.4)"],
+        requires_python: ">=3.8",
+        license: "Apache-2.0",
+        home_page: "https://requests.readthedocs.io/",
+        author: "Kenneth Reitz",
+        description: "A friendly HTTP library.",
+        maintainer: "Kenneth Reitz",
+      },
+    };
+
+    const cratesPayload = {
+      crate: {
+        name: "serde",
+        description: "Serialization framework",
+        max_stable_version: "1.0.200",
+        updated_at: "2026-06-01T00:00:00.000Z",
+        license: "MIT/Apache-2.0",
+      },
+      versions: [
+        {
+          num: "1.0.200",
+          deps: [
+            { name: "serde_derive", req: "^1.0", kind: "normal", optional: false },
+            { name: "serde_json", req: "^1.0", kind: "normal", optional: true },
+          ],
+        },
+      ],
+    };
+
+    const routeResponses = [
+      {
+        host: "registry.npmjs.org",
+        body: JSON.stringify(npmPayload),
+      },
+      {
+        host: "pypi.org",
+        body: JSON.stringify(pypiPayload),
+      },
+      {
+        host: "crates.io",
+        body: JSON.stringify(cratesPayload),
+      },
+    ];
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (input: string | URL) => {
+      const target = String(input);
+      const matched = routeResponses.find((entry) => target.includes(entry.host));
+      if (!matched) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response(matched.body, { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const npmResult = await fetchPackageRegistryMarkdown({
+      url: new URL("https://www.npmjs.com/package/@scope/example"),
+    });
+    expect(npmResult.routeName).toBe("npm");
+    expect(npmResult.content).toContain("# npm package");
+    expect(npmResult.content).toContain("Package: @scope/example");
+    expect(npmResult.content).toContain("Version: 1.2.3");
+    expect(npmResult.content).toContain("- left-pad: ^1.3.0");
+
+    const pypiResult = await fetchPackageRegistryMarkdown({ url: new URL("https://pypi.org/project/requests/") });
+    expect(pypiResult.routeName).toBe("pypi");
+    expect(pypiResult.content).toContain("# PyPI package");
+    expect(pypiResult.content).toContain("Version: 2.32.3");
+    expect(pypiResult.content).toContain("- charset_normalizer");
+
+    const cratesResult = await fetchPackageRegistryMarkdown({
+      url: new URL("https://crates.io/crates/serde"),
+    });
+    expect(cratesResult.routeName).toBe("crates");
+    expect(cratesResult.content).toContain("# Cargo crate");
+    expect(cratesResult.content).toContain("Crate: serde");
+    expect(cratesResult.content).toContain("Version: 1.0.200");
+    expect(cratesResult.content).toContain("serde_derive");
+    expect(cratesResult.content).toContain("(optional)");
+
+    globalThis.fetch = originalFetch;
+  });
+
+  it("renders HN nested comments as markdown", async () => {
+    const itemPayload = {
+      id: 555,
+      title: "How does bundling work?",
+      points: 42,
+      author: "hacker-news-user",
+      text: "How does this algorithm work?",
+      created_at: "2026-06-01T00:00:00Z",
+      url: "https://example.com",
+      children: [
+        {
+          id: 1,
+          author: "alice",
+          text: "<p>Great question!</p>",
+          points: 12,
+          children: [
+            {
+              id: 2,
+              author: "bob",
+              text: "<p>Nested reply with details.</p>",
+              points: 3,
+            },
+          ],
+        },
+      ],
+    };
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (input: string | URL) =>
+      new Response(JSON.stringify(itemPayload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    const output = await fetchHackerNewsItemMarkdown({
+      url: new URL("https://news.ycombinator.com/item?id=555"),
+    });
+    globalThis.fetch = originalFetch;
+
+    expect(output.routeName).toBe("hackernews");
+    expect(output.sourceUrl).toBe("https://news.ycombinator.com/item?id=555");
+    expect(output.content).toContain("# Hacker News item");
+    expect(output.content).toContain("Item ID: 555");
+    expect(output.content).toContain("How does this algorithm work?");
+    expect(output.content).toContain("u/alice");
+    expect(output.content).toContain("Nested reply with details.");
+  });
+
+  it("renders huggingface card metadata and README", async () => {
+    const apiPayload = {
+      id: "meta-llama/Llama-3.2-1B",
+      downloads: 1234,
+      likes: 321,
+      library_name: "transformers",
+      pipeline_tag: "text-generation",
+      cardData: {
+        base_model: "llama",
+        license: "Apache-2.0",
+      },
+      tags: ["text-generation", "llama"],
+      siblings: [],
+    };
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (input: string | URL) => {
+      const target = String(input);
+      if (target.includes("/api/models/")) {
+        return new Response(JSON.stringify(apiPayload), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (target.includes("/resolve/main/README.md")) {
+        return new Response("# Llama\n\nThis is a test README.", { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const output = await fetchHuggingFaceCardMarkdown({
+      url: new URL("https://huggingface.co/meta-llama/Llama-3.2-1B"),
+    });
+    globalThis.fetch = originalFetch;
+
+    expect(output.routeName).toBe("huggingface");
+    expect(output.content).toContain("# Hugging Face model");
+    expect(output.content).toContain("ID: meta-llama/Llama-3.2-1B");
+    expect(output.content).toContain("Pipeline: text-generation");
+    expect(output.content).toContain("Base model: llama");
+    expect(output.content).toContain("This is a test README.");
+  });
+
+  it("renders x/tweet via jina mirror and preserves conversation context", async () => {
+    const mirrorPayload = [
+      "# Post",
+      "",
+      "Original tweet body",
+      "",
+      "Replies (2)",
+      "- reply one",
+      "- reply two",
+    ].join("\n");
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = async () =>
+      new Response(mirrorPayload, {
+        status: 200,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+
+    const output = await fetchXPostMarkdown({
+      url: new URL("https://x.com/user/status/1234567890123456789"),
+    });
+    globalThis.fetch = originalFetch;
+
+    expect(output.routeName).toBe("x");
+    expect(output.content).toContain("Tweet ID: 1234567890123456789");
+    expect(output.content).toContain("Original tweet body");
+    expect(output.content).toContain("http://x.com/i/web/status/1234567890123456789?conversation=1");
   });
 
   it("throws for unsupported wikipedia URL shapes", async () => {

@@ -96,6 +96,8 @@ Reads a webpage URL as plain text content. In debug mode the same behavior is ex
 - `REDDIT_APIFY_ACTOR`: Optionally overrides the Reddit actor used for live verification and handler calls
 - `YTDLP_COOKIES_FILE`: Optionally points at a Netscape-format cookie jar for `yt-dlp` when YouTube bot-checks gate spoken/informational videos
 - `YOUTUBE_VERIFY_TIMEOUT_MS`: Optionally increases the per-command timeout used by `just youtube-live-verify` on slow CPU hosts during Whisper transcription
+- `WEBFETCH_PDF_MAX_BYTES`: Maximum allowed PDF byte-size for automatic extraction (default `10485760`)
+- `WEBFETCH_PDF_CONVERSION_TIMEOUT_MS`: Timeout in milliseconds for PDF markdown conversion (default `120000`)
 
 ### `websearch`
 
@@ -109,6 +111,7 @@ exposed as `websearch_debug`.
 - **Commands**: `gh`, `w3m`, `curl`
 - **Handlers**: `yt-dlp`, `uvx`, Apify CLI (for Reddit)
 - **MCP**: Python 3.11+, `uv`, `fastmcp`
+- **PDF extraction**: Python package `docling` (available in your environment for `python3`)
 
 ## Development
 

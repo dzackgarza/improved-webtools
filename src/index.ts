@@ -1,20 +1,33 @@
 import { type Plugin, tool } from "@opencode-ai/plugin";
 import { getEncoding } from "js-tiktoken";
 import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import {
   fetchArxivLibraryContent,
   fetchGitHubContent,
+  fetchHackerNewsItemMarkdown,
+  fetchHuggingFaceCardMarkdown,
   fetchRedditPostMarkdown,
+  fetchPackageRegistryMarkdown,
   fetchYoutubeTranscriptMarkdown,
   fetchWikipediaMarkdown,
+  fetchStackExchangeMarkdown,
+  fetchXPostMarkdown,
   isArxivLibraryUrl,
   GITHUB_DOMAINS,
   hostMatchesDomain,
+  HACKERNEWS_DOMAINS,
+  HUGGINGFACE_DOMAINS,
+  NPM_DOMAINS,
   REDDIT_DOMAINS,
   type CommandExecutionResult,
   type WebFetchDomainHandler,
   type WebFetchHandlerResult,
+  CRATES_DOMAINS,
+  PYPI_DOMAINS,
   WIKIPEDIA_DOMAINS,
+  STACKEXCHANGE_DOMAINS,
+  X_DOMAINS,
   YOUTUBE_DOMAINS,
 } from "./webfetch-handlers/index.ts";
 import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
@@ -43,6 +56,14 @@ const SEARXNG_INSTANCE_URL = (process.env.SEARXNG_INSTANCE_URL ?? "").trim();
 const DEFAULT_TIMEOUT_MS = 15_000;
 const WEBFETCH_COMMAND_TIMEOUT_MS = 30_000;
 const WEBFETCH_WIKIPEDIA_CONVERT_TIMEOUT_MS = 120_000;
+const WEBFETCH_PDF_CONVERSION_TIMEOUT_MS = parsePositiveIntegerEnv(
+  process.env.WEBFETCH_PDF_CONVERSION_TIMEOUT_MS ?? "120000",
+  120_000,
+);
+const WEBFETCH_PDF_MAX_BYTES = parsePositiveIntegerEnv(
+  process.env.WEBFETCH_PDF_MAX_BYTES ?? "10485760",
+  10_485_760,
+);
 const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 20;
 const MAX_OFFSET = 200;
@@ -67,6 +88,9 @@ const WIKIPEDIA_API_USER_AGENT = (
 const WIKIPEDIA_CONVERTER_SCRIPT = decodeURIComponent(
   new URL("./scripts/wikipedia_html_to_markdown.py", import.meta.url).pathname,
 );
+const PDF_TO_MARKDOWN_SCRIPT = decodeURIComponent(
+  new URL("./scripts/pdf_to_markdown.py", import.meta.url).pathname,
+);
 const WEBFETCH_BASE_DESCRIPTION = "Use when you need to read a webpage URL as plain text content.";
 const WEBSEARCH_BASE_DESCRIPTION =
   "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
@@ -74,6 +98,11 @@ const WEBSEARCH_BASE_DESCRIPTION =
 function envFlagEnabled(value?: string): boolean {
   const normalized = (value ?? "").trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function parsePositiveIntegerEnv(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 const IMPROVED_WEBTOOLS_DEBUG_MODE = envFlagEnabled(process.env.IMPROVED_WEBTOOLS_DEBUG_MODE);
@@ -305,7 +334,7 @@ function isPdfContentType(contentType?: string): boolean {
   return contentType?.toLowerCase().includes("application/pdf") ?? false;
 }
 
-async function downloadPdfToTemp(url: URL): Promise<CommandExecutionResult> {
+async function downloadPdfToTemp(url: URL): Promise<string> {
   return runCommand([
     "sh",
     "-lc",
@@ -313,10 +342,72 @@ async function downloadPdfToTemp(url: URL): Promise<CommandExecutionResult> {
       "set -eu",
       "tmpdir=$(mktemp -d /tmp/webfetch-pdf-XXXXXX)",
       'outfile="$tmpdir/document.pdf"',
-      `curl -sSL --compressed --max-time 30 -o "$outfile" ${JSON.stringify(url.toString())}`,
+      `curl -sSL --compressed --max-time 30 --max-filesize ${WEBFETCH_PDF_MAX_BYTES} -o "$outfile" ${JSON.stringify(url.toString())}`,
       'printf "%s\\n" "$outfile"',
     ].join("; "),
-  ]);
+  ]).then((downloadResult) => {
+    if (downloadResult.exitCode !== 0) {
+      throw new Error(
+        `pdf webfetch download failed (exit ${downloadResult.exitCode}): ${downloadResult.stderrText.trim()}`,
+      );
+    }
+    const path = downloadResult.stdoutText.trim();
+    if (!path) {
+      throw new Error("pdf webfetch download did not produce a temp file path.");
+    }
+    return path;
+  });
+}
+
+function getDownloadedPdfSize(filePath: string): number | undefined {
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildPdfLimitMessage(input: {
+  contentLength?: number;
+  detectedSize?: number;
+  sourceUrl: string;
+}): string {
+  const detectedSize = input.detectedSize ?? input.contentLength;
+  const lines = [
+    `PDF conversion skipped for ${input.sourceUrl}.`,
+    `The file size exceeds the configured limit of ${WEBFETCH_PDF_MAX_BYTES} bytes.`,
+    detectedSize === undefined ? "" : `Detected size: ${detectedSize} bytes.`,
+    "If you need larger PDFs, increase WEBFETCH_PDF_MAX_BYTES and retry.",
+    "For now, this URL is intentionally blocked from automatic extraction.",
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
+function isPdfSizeWithinLimit(contentLength?: number, detectedSize?: number): boolean {
+  const size = detectedSize ?? contentLength;
+  if (size === undefined) return true;
+  return size <= WEBFETCH_PDF_MAX_BYTES;
+}
+
+async function convertPdfToMarkdown(input: {
+  pdfPath: string;
+  sourceUrl: string;
+}): Promise<string> {
+  const conversion = await runCommand(
+    ["python3", PDF_TO_MARKDOWN_SCRIPT, input.pdfPath],
+    WEBFETCH_PDF_CONVERSION_TIMEOUT_MS,
+  );
+  if (conversion.exitCode !== 0) {
+    const details = conversion.stderrText.trim();
+    throw new Error(
+      `PDF conversion failed for ${input.sourceUrl} (exit ${conversion.exitCode}): ${details || "unknown failure"}`,
+    );
+  }
+  const markdown = conversion.stdoutText.trim();
+  if (!markdown) {
+    throw new Error(`PDF conversion returned no output for ${input.sourceUrl}.`);
+  }
+  return markdown;
 }
 
 function formatArxivServiceMessage(input: {
@@ -598,6 +689,14 @@ function formatResults(input: {
 export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
   const webFetchDomainHandlers: readonly WebFetchDomainHandler[] = [
     {
+      name: "stackexchange",
+      domains: STACKEXCHANGE_DOMAINS,
+      handle: async ({ url }) =>
+        fetchStackExchangeMarkdown({
+          url,
+        }),
+    },
+    {
       name: "wikipedia",
       domains: WIKIPEDIA_DOMAINS,
       handle: async ({ url }) =>
@@ -636,6 +735,38 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         fetchGitHubContent({
           url,
           runCommand,
+        }),
+    },
+    {
+      name: "package-registry",
+      domains: [...NPM_DOMAINS, ...PYPI_DOMAINS, ...CRATES_DOMAINS],
+      handle: async ({ url }) =>
+        fetchPackageRegistryMarkdown({
+          url,
+        }),
+    },
+    {
+      name: "hackernews",
+      domains: HACKERNEWS_DOMAINS,
+      handle: async ({ url }) =>
+        fetchHackerNewsItemMarkdown({
+          url,
+        }),
+    },
+    {
+      name: "huggingface",
+      domains: HUGGINGFACE_DOMAINS,
+      handle: async ({ url }) =>
+        fetchHuggingFaceCardMarkdown({
+          url,
+        }),
+    },
+    {
+      name: "x",
+      domains: X_DOMAINS,
+      handle: async ({ url }) =>
+        fetchXPostMarkdown({
+          url,
         }),
     },
   ];
@@ -892,26 +1023,59 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
               : await (async () => {
                   const httpMetadata = await fetchHttpMetadata(parsed);
                   if (isPdfContentType(httpMetadata.contentType)) {
-                    const downloadResult = await downloadPdfToTemp(parsed);
-                    if (downloadResult.exitCode !== 0) {
-                      throw new Error(
-                        `pdf webfetch failed (exit ${downloadResult.exitCode}): ${downloadResult.stderrText.trim()}`,
-                      );
+                    if (!isPdfSizeWithinLimit(httpMetadata.contentLength)) {
+                      return {
+                        routeName: "default/pdf",
+                        sourceUrl: parsed.toString(),
+                        content: buildPdfLimitMessage({
+                          sourceUrl: parsed.toString(),
+                          contentLength: httpMetadata.contentLength,
+                        }),
+                      };
                     }
-                    const savedPath = downloadResult.stdoutText.trim();
+                    const savedPdfPath = await downloadPdfToTemp(parsed);
+                    const downloadedSize = getDownloadedPdfSize(savedPdfPath);
+                    if (!isPdfSizeWithinLimit(undefined, downloadedSize)) {
+                      return {
+                        routeName: "default/pdf",
+                        sourceUrl: parsed.toString(),
+                        content: buildPdfLimitMessage({
+                          sourceUrl: parsed.toString(),
+                          detectedSize: downloadedSize,
+                        }),
+                      };
+                    }
+                    let markdown: string;
+                    try {
+                      markdown = await convertPdfToMarkdown({
+                        pdfPath: savedPdfPath,
+                        sourceUrl: parsed.toString(),
+                      });
+                    } catch (error) {
+                      const message = error instanceof Error ? error.message : String(error);
+                      return {
+                        routeName: "default/pdf",
+                        sourceUrl: parsed.toString(),
+                        content: [
+                          `PDF conversion failed for ${parsed.toString()}.`,
+                          `Saved PDF: ${savedPdfPath}`,
+                          `Binary content detected: ${httpMetadata.contentType}.`,
+                          message,
+                        ].join("\n"),
+                      };
+                    }
                     const details = [
-                      `Binary content detected: ${httpMetadata.contentType}.`,
-                      `Saved PDF: ${savedPath}`,
-                    ];
-                    if (httpMetadata.contentLength !== undefined) {
-                      details.push(`Content-Length: ${httpMetadata.contentLength} bytes`);
-                    }
-                    details.push(
-                      "PDF responses are downloaded directly to a temporary directory instead of being piped through w3m.",
-                    );
-                    details.push("Use your normal file-reading tools on the saved file.");
+                      `PDF content detected: ${httpMetadata.contentType}.`,
+                      `Saved PDF: ${savedPdfPath}`,
+                      downloadedSize !== undefined
+                        ? `Detected size: ${downloadedSize} bytes.`
+                        : `Content-Length: ${httpMetadata.contentLength} bytes.`,
+                      "Converted to Markdown:",
+                      "",
+                      markdown,
+                    ].filter(Boolean);
                     return {
-                      routeName: "default/binary-pdf",
+                      routeName: "default/pdf",
                       sourceUrl: parsed.toString(),
                       content: details.join("\n"),
                     };
