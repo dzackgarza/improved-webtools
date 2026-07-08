@@ -65,6 +65,22 @@ function fixtureText(relativePath: string): string {
   return readFileSync(path, "utf8");
 }
 
+function youtubeDependencyCheckOutput(overrides: Partial<Record<string, boolean>> = {}): string {
+  const checks: Record<string, boolean> = {
+    uvx: true,
+    ffmpeg: true,
+    ffprobe: true,
+    bun: true,
+    node: true,
+    deno: true,
+    ...overrides,
+  };
+
+  return Object.entries(checks)
+    .map(([command, available]) => `DEP_CHECK:${command}:${available ? 1 : 0}`)
+    .join("\n");
+}
+
 function fixtureJson<T>(relativePath: string): T {
   return JSON.parse(fixtureText(relativePath)) as T;
 }
@@ -490,6 +506,21 @@ describe("searxng-search plugin", () => {
     const vtt = fixtureText("youtube/dQw4w9WgXcQ.en.vtt");
 
     (Bun as any).spawn = (args: string[]) => {
+      if (args[0] === "sh" && args[1] === "-lc") {
+        if (args[2]?.includes("DEP_CHECK:")) {
+          return {
+            stdout: streamFromText(youtubeDependencyCheckOutput()),
+            stderr: streamFromText(""),
+            exited: Promise.resolve(0),
+          };
+        }
+        return {
+          stdout: streamFromText(""),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
+
       if (
         args[0] === "uvx" &&
         args.includes("yt-dlp") &&

@@ -1,4 +1,5 @@
 import { hostMatchesDomain, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
+import { WebVTTParser, type TreeNode, type VTTData } from "webvtt-parser";
 
 export const YOUTUBE_DOMAINS = [
   "youtube.com",
@@ -30,8 +31,6 @@ type TimestampedCaptionLine = {
   start: string;
   text: string;
 };
-
-const VTT_TIMESTAMP_LINE = /^(\d{2}:\d{2}:\d{2}[.,]\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}[.,]\d{3})/;
 
 function buildYtDlpCommand(extraArgs: string[]): string[] {
   const cookiesFile = (process.env.YTDLP_COOKIES_FILE ?? "").trim();
@@ -67,151 +66,110 @@ function normalizeYoutubeUrl(url: URL): URL {
   return new URL(url.toString());
 }
 
-function htmlEntityDecode(text: string): string {
-  return text
-    .replaceAll("&amp;", "&")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'");
+function formatVttTimestamp(seconds: number): string {
+  const ms = Math.round(seconds * 1000);
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  const millis = String(ms % 1000).padStart(3, "0");
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${millis}`;
 }
 
-function stripVttTags(text: string): string {
-  return htmlEntityDecode(
-    text
-      .replaceAll(/<\d{2}:\d{2}:\d{2}[.,]\d{3}>/g, "")
-      .replaceAll(/<\/?[^>]+>/g, "")
-      .replace(/^\uFEFF/, "")
-      .trim(),
-  );
+function cueTreeToText(node: TreeNode): string {
+  if (node.type === "text") {
+    return node.value;
+  }
+  if (node.type === "timestamp") {
+    return "";
+  }
+  return node.children.map((child) => cueTreeToText(child)).join("");
+}
+
+function normalizeCueText(rawText: string): string {
+  const tokens = rawText
+    .split("\n")
+    .flatMap((line) =>
+      line
+        .replaceAll("\r", "")
+        .replaceAll("\t", " ")
+        .split(" ")
+        .map((token) => token.trim())
+        .filter((token) => token.length > 0),
+    );
+  return tokens.join(" ");
+}
+
+function parseWebVtt(vtt: string): VTTData {
+  return new WebVTTParser().parse(vtt, "metadata");
 }
 
 async function checkYouTubeDependencies(runCommand: RunCommand): Promise<string[]> {
-  async function commandExists(command: string): Promise<boolean> {
-    const result = await runCommand(["sh", "-lc", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`]);
-    return result.exitCode === 0;
+  const commands = ["uvx", "ffmpeg", "ffprobe", "bun", "node", "deno"];
+  const checkScript = commands
+    .map((command) =>
+      `command -v ${JSON.stringify(command)} >/dev/null 2>&1 && echo "DEP_CHECK:${command}:1" || echo "DEP_CHECK:${command}:0"`)
+    .join("; ");
+
+  const checkResult = await runCommand(["sh", "-lc", checkScript]);
+  const results = new Map<string, boolean>();
+  for (const line of checkResult.stdoutText.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("DEP_CHECK:")) {
+      continue;
+    }
+    const payload = trimmed.slice("DEP_CHECK:".length);
+    const parts = payload.split(":");
+    if (parts.length !== 2) {
+      continue;
+    }
+    const name = parts[0]?.trim();
+    const value = parts[1]?.trim();
+    if (!name || (value !== "0" && value !== "1")) {
+      continue;
+    }
+    results.set(name, value === "1");
   }
 
-  const [hasUvx, hasFfmpeg, hasFfprobe, hasBun, hasNode, hasDeno] = await Promise.all([
-    commandExists("uvx"),
-    commandExists("ffmpeg"),
-    commandExists("ffprobe"),
-    commandExists("bun"),
-    commandExists("node"),
-    commandExists("deno"),
-  ]);
+  const hasUvx = results.get("uvx") ?? false;
+  const hasFfmpeg = results.get("ffmpeg") ?? false;
+  const hasFfprobe = results.get("ffprobe") ?? false;
+  const hasBun = results.get("bun") ?? false;
+  const hasNode = results.get("node") ?? false;
+  const hasDeno = results.get("deno") ?? false;
 
   const checks: DependencyCheckResult[] = [
     { name: "uvx", missing: !hasUvx },
-    { name: "ffmpeg", missing: !hasFfmpeg },
-    { name: "ffprobe", missing: !hasFfprobe },
     {
       name: "bun | node | deno",
       missing: !(hasBun || hasNode || hasDeno),
     },
+    { name: "ffmpeg", missing: !hasFfmpeg },
+    { name: "ffprobe", missing: !hasFfprobe },
   ];
 
   return checks.filter((check) => check.missing).map((check) => check.name);
 }
 
 function vttToPlainText(vtt: string): string {
-  const lines = vtt.replace(/\r/g, "").split("\n");
+  const parsed = parseWebVtt(vtt);
   const out: TimestampedCaptionLine[] = [];
-  let currentStart: string | null = null;
-  let currentLines: string[] = [];
-  let hadTimestampLine = false;
 
-  const flushCue = () => {
-    if (!currentStart) {
-      return;
-    }
-    const text = stripVttTags(currentLines.join(" "));
+  for (const cue of parsed.cues) {
+    const text = normalizeCueText(cueTreeToText(cue.tree));
     if (!text) {
-      return;
-    }
-    out.push({ start: currentStart, text });
-    currentStart = null;
-    currentLines = [];
-  };
-
-  const pushFallback = () => {
-    // Backward compatible path for non-timestamped subtitle dumps.
-    const fallback = lines
-      .map((raw) => stripVttTags(raw))
-      .filter(Boolean)
-      .filter((line) => line !== "WEBVTT" && line !== "Kind: captions" && line !== "Language: en")
-      .filter((line) => !/^NOTE\b/.test(line) && !/^\d+$/.test(line))
-      .filter((line) => !VTT_TIMESTAMP_LINE.test(line));
-    const normalized = fallback.map((line) => line.trim()).filter(Boolean);
-    for (const line of normalized) {
-      out.push({ start: "", text: line });
-    }
-  };
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) {
-      if (currentStart !== null) {
-        flushCue();
-      }
       continue;
     }
-
-    if (line === "WEBVTT" || line === "Kind: captions" || line === "Language: en" || /^NOTE\b/.test(line)) {
-      continue;
-    }
-
-    if (/^\d+$/.test(line)) {
-      continue;
-    }
-
-    const match = line.match(VTT_TIMESTAMP_LINE);
-    if (match) {
-      flushCue();
-      hadTimestampLine = true;
-      currentStart = match[1]!.replace(",", ".");
-      continue;
-    }
-
-    if (currentStart === null) {
-      currentLines.push(raw);
-    } else {
-      currentLines.push(line);
-    }
-  }
-  if (currentStart !== null) {
-    flushCue();
+    out.push({
+      start: formatVttTimestamp(cue.startTime),
+      text,
+    });
   }
 
-  if (out.length > 0) {
-    const deduped: string[] = [];
-    let prev = "";
-    for (const cue of out) {
-      if (cue.start) {
-        const line = `${cue.start} ${cue.text}`;
-        if (!line || line === prev) continue;
-        deduped.push(line);
-        prev = line;
-      } else {
-        const line = cue.text;
-        if (!line || line === prev) continue;
-        deduped.push(line);
-        prev = line;
-      }
-    }
-    return deduped.join("\n");
+  if (out.length === 0) {
+    return "";
   }
 
-  if (!hadTimestampLine) {
-    pushFallback();
-  }
-
-  if (out.length > 0) {
-    const deduped = [...new Set(out.map((cue) => cue.text))];
-    return deduped.join("\n");
-  }
-
-  return "";
+  return out.map((cue) => `${cue.start} ${cue.text}`).join("\n");
 }
 
 async function pickTranscriptFile(tempDir: string): Promise<string | undefined> {
@@ -308,7 +266,6 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
         };
       }
     }
-
     const audioDownload = await input.runCommand(buildYtDlpCommand([
       "-x",
       "--audio-format",

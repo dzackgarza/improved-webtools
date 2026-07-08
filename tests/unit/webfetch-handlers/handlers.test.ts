@@ -26,6 +26,22 @@ function fixtureJson<T>(relativePath: string): T {
   return JSON.parse(fixtureText(relativePath)) as T;
 }
 
+function youtubeDependencyCheckOutput(overrides: Partial<Record<string, boolean>> = {}): string {
+  const checks: Record<string, boolean> = {
+    uvx: true,
+    ffmpeg: true,
+    ffprobe: true,
+    bun: true,
+    node: true,
+    deno: true,
+    ...overrides,
+  };
+
+  return Object.entries(checks)
+    .map(([command, available]) => `DEP_CHECK:${command}:${available ? 1 : 0}`)
+    .join("\n");
+}
+
 describe("webfetch handler modules", () => {
   const originalFetch = globalThis.fetch;
   const originalSpawn = Bun.spawn;
@@ -181,6 +197,9 @@ describe("webfetch handler modules", () => {
       runCommand: async (args) => {
         calls.push(args);
         if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
           return { stdoutText: "", stderrText: "", exitCode: 0 };
         }
 
@@ -208,7 +227,113 @@ describe("webfetch handler modules", () => {
     expect(calls.some((args) => args.includes("--write-subs"))).toBe(true);
     expect(output.routeName).toBe("youtube");
     expect(output.content).toContain("We're no strangers to");
-    expect(output.content).toContain("00:00:18.800 We're no strangers to");
+    expect(output.content).toContain("00:00:21.790 We're no strangers to");
+  });
+
+  it("parses legacy and note-block WebVTT forms without leaking cue IDs or NOTE metadata", async () => {
+    const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
+    const legacyVtt = `WEBVTT
+
+NOTE
+This is a parser-level note.
+Keep this hidden.
+
+caption-id-001
+00:18.800 --> 00:20.000
+First visible line
+Second visible line
+
+NOTE this inline note starts a block
+should not leak
+
+100:00:18.800 --> 100:00:20.000
+Long-hour timestamp should parse too`;
+
+    const output = await fetchYoutubeTranscriptMarkdown({
+      url: new URL("https://youtu.be/dQw4w9WgXcQ"),
+      runCommand: async (args) => {
+        if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
+
+        if (args.includes("--list-subs")) {
+          return { stdoutText: listSubs, stderrText: "", exitCode: 0 };
+        }
+
+        if (args.includes("--write-subs")) {
+          const outputIndex = args.indexOf("-o");
+          const template = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
+          if (template) {
+            const slash = template.lastIndexOf("/");
+            const dir = slash >= 0 ? template.slice(0, slash) : ".";
+            await Bun.$`mkdir -p ${dir}`.quiet();
+            await Bun.write(`${dir}/dQw4w9WgXcQ.en.vtt`, legacyVtt);
+          }
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
+
+        return { stdoutText: "", stderrText: "unexpected", exitCode: 1 };
+      },
+    });
+
+    expect(output.routeName).toBe("youtube");
+    expect(output.content).toContain("00:18.800 First visible line Second visible line");
+    expect(output.content).toContain("100:00:18.800 Long-hour timestamp should parse too");
+    expect(output.content).not.toContain("caption-id-001");
+    expect(output.content).not.toContain("parser-level note");
+    expect(output.content).not.toContain("should not leak");
+  });
+
+  it("preserves every cue line, including repeated timestamps", async () => {
+    const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
+    const duplicateVtt = `WEBVTT
+
+00:00:01.000 --> 00:00:02.000
+first line
+
+00:00:01.000 --> 00:00:02.000
+first line
+
+00:00:02.000 --> 00:00:03.000
+second line`;
+
+    const output = await fetchYoutubeTranscriptMarkdown({
+      url: new URL("https://youtu.be/dQw4w9WgXcQ"),
+      runCommand: async (args) => {
+        if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
+
+        if (args.includes("--list-subs")) {
+          return { stdoutText: listSubs, stderrText: "", exitCode: 0 };
+        }
+
+        if (args.includes("--write-subs")) {
+          const outputIndex = args.indexOf("-o");
+          const template = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
+          if (template) {
+            const slash = template.lastIndexOf("/");
+            const dir = slash >= 0 ? template.slice(0, slash) : ".";
+            await Bun.$`mkdir -p ${dir}`.quiet();
+            await Bun.write(`${dir}/dQw4w9WgXcQ.en.vtt`, duplicateVtt);
+          }
+          return { stdoutText: fixtureText("youtube/dQw4w9WgXcQ.write-subs.out"), stderrText: "", exitCode: 0 };
+        }
+
+        return { stdoutText: "", stderrText: "unexpected", exitCode: 1 };
+      },
+    });
+
+    expect(output.routeName).toBe("youtube");
+    expect(output.content).toContain("00:00:01.000 first line");
+    const lines = output.content.split("\n").filter((line) => line.includes("first line"));
+    expect(lines).toHaveLength(2);
   });
 
   it("passes an optional yt-dlp cookies file to youtube commands", async () => {
@@ -222,6 +347,9 @@ describe("webfetch handler modules", () => {
         runCommand: async (args) => {
           calls.push(args);
           if (args[0] === "sh" && args[1] === "-lc") {
+            if (args[2]?.includes("DEP_CHECK:")) {
+              return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+            }
             return { stdoutText: "", stderrText: "", exitCode: 0 };
           }
           return {
@@ -256,6 +384,9 @@ describe("webfetch handler modules", () => {
       runCommand: async (args) => {
         calls.push(args);
         if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
           return { stdoutText: "", stderrText: "", exitCode: 0 };
         }
 
@@ -387,6 +518,9 @@ describe("webfetch handler modules", () => {
       url: new URL("https://www.youtube.com/watch?v=8S0FDjFBj8o"),
       runCommand: async (args) => {
         if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
           return { stdoutText: "", stderrText: "", exitCode: 0 };
         }
         if (args.includes("--list-subs")) {
@@ -408,6 +542,9 @@ describe("webfetch handler modules", () => {
       url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
       runCommand: async (args) => {
         if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
           return { stdoutText: "", stderrText: "", exitCode: 0 };
         }
         if (args.includes("--list-subs")) {
@@ -437,6 +574,13 @@ describe("webfetch handler modules", () => {
       runCommand: async (args) => {
         if (args[0] === "sh" && args[1] === "-lc") {
           dependencyCalls.push(args);
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return {
+              stdoutText: youtubeDependencyCheckOutput({ uvx: false, bun: false, node: false, deno: false, ffmpeg: false, ffprobe: false }),
+              stderrText: "",
+              exitCode: 0,
+            };
+          }
           return {
             stdoutText: "",
             stderrText: "",
@@ -450,9 +594,10 @@ describe("webfetch handler modules", () => {
     expect(output.routeName).toBe("youtube");
     expect(output.content).toContain("Missing required dependencies:");
     expect(output.content).toContain("uvx");
+    expect(output.content).toContain("bun | node | deno");
     expect(output.content).toContain("ffmpeg");
     expect(output.content).toContain("ffprobe");
-    expect(dependencyCalls.length).toBeGreaterThanOrEqual(6);
+    expect(dependencyCalls.length).toBe(1);
   });
 
   it("sanitizes cookies path from dependency and extractor failures", async () => {
@@ -462,6 +607,9 @@ describe("webfetch handler modules", () => {
       url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
       runCommand: async (args) => {
         if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
           return { stdoutText: "", stderrText: "", exitCode: 0 };
         }
         if (args.includes("--list-subs")) {

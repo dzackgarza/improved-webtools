@@ -32,6 +32,8 @@ def main() -> int:
         return exit_with_error(f"docling dependency is unavailable: {exc}", 2)
 
     options = PdfPipelineOptions()
+    if hasattr(options, "do_formula_enrichment"):
+        options.do_formula_enrichment = True
     converter = DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
     )
