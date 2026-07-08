@@ -65,6 +65,22 @@ function fixtureText(relativePath: string): string {
   return readFileSync(path, "utf8");
 }
 
+function youtubeDependencyCheckOutput(overrides: Partial<Record<string, boolean>> = {}): string {
+  const checks: Record<string, boolean> = {
+    uvx: true,
+    ffmpeg: true,
+    ffprobe: true,
+    bun: true,
+    node: true,
+    deno: true,
+    ...overrides,
+  };
+
+  return Object.entries(checks)
+    .map(([command, available]) => `DEP_CHECK:${command}:${available ? 1 : 0}`)
+    .join("\n");
+}
+
 function fixtureJson<T>(relativePath: string): T {
   return JSON.parse(fixtureText(relativePath)) as T;
 }
@@ -116,6 +132,7 @@ describe("searxng-search plugin", () => {
   const originalCacheDir = process.env.WEBFETCH_CACHE_DIR;
   const originalCacheTtlDays = process.env.WEBFETCH_CACHE_TTL_DAYS;
   const originalArxivLibraryDir = process.env.WEBFETCH_ARXIV_LIBRARY_DIR;
+  const originalPdfMaxBytes = process.env.WEBFETCH_PDF_MAX_BYTES;
 
   beforeEach(() => {
     globalThis.fetch = originalFetch;
@@ -141,6 +158,8 @@ describe("searxng-search plugin", () => {
     if (originalArxivLibraryDir === undefined)
       delete process.env.WEBFETCH_ARXIV_LIBRARY_DIR;
     else process.env.WEBFETCH_ARXIV_LIBRARY_DIR = originalArxivLibraryDir;
+    if (originalPdfMaxBytes === undefined) delete process.env.WEBFETCH_PDF_MAX_BYTES;
+    else process.env.WEBFETCH_PDF_MAX_BYTES = originalPdfMaxBytes;
   });
 
   it("formats websearch results with pagination", async () => {
@@ -315,12 +334,13 @@ describe("searxng-search plugin", () => {
     expect(output).toContain("Token count:");
   });
 
-  it("downloads PDFs to a temp file instead of piping raw bytes through w3m", async () => {
+  it("downloads PDFs and extracts PDF content into Markdown", async () => {
     const calls: string[][] = [];
 
     (Bun as any).spawn = (args: string[]) => {
       calls.push(args);
       const script = args[2] ?? "";
+      const command = args[0] ?? "";
 
       if (script.includes("curl -sSIL")) {
         return {
@@ -337,9 +357,19 @@ describe("searxng-search plugin", () => {
         };
       }
 
-      if (script.includes('curl -sSL --compressed --max-time 30 -o "$outfile"')) {
+      if (script.includes("--max-filesize 10485760") && script.includes('curl -sSL --compressed --max-time 30')) {
+        mkdirSync("/tmp/webfetch-pdf-abcd12", { recursive: true });
+        writeFileSync("/tmp/webfetch-pdf-abcd12/document.pdf", "x".repeat(13264));
         return {
           stdout: streamFromText("/tmp/webfetch-pdf-abcd12/document.pdf\n"),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
+
+      if (command === "python3" && (args[1] ?? "").endsWith("/pdf_to_markdown.py")) {
+        return {
+          stdout: streamFromText("# PDF Title\n\nSome extracted markdown content.\n"),
           stderr: streamFromText(""),
           exited: Promise.resolve(0),
         };
@@ -364,18 +394,71 @@ describe("searxng-search plugin", () => {
       context as any,
     );
 
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[0]?.[2]).toContain("curl -sSIL");
-    expect(calls[1]?.[2]).toContain('curl -sSL --compressed --max-time 30 -o "$outfile"');
+    expect(calls[1]?.[2]).toContain("max-filesize");
+    expect(calls[1]?.[2]).toContain('curl -sSL --compressed --max-time 30 --max-filesize 10485760 -o "$outfile"');
+    expect(calls[2]?.[0]).toBe("python3");
     expect(output).toContain(
       "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
     );
-    expect(output).toContain("Route: default/binary-pdf");
-    expect(output).toContain(
-      "Binary content detected: application/pdf.",
-    );
+    expect(output).toContain("Route: default/pdf");
+    expect(output).toContain("PDF content detected: application/pdf.");
     expect(output).toContain("Saved PDF: /tmp/webfetch-pdf-abcd12/document.pdf");
-    expect(output).toContain("Content-Length: 13264 bytes");
+    expect(output).toContain("Detected size: 13264 bytes.");
+    expect(output).toContain("Converted to Markdown:");
+    expect(output).toContain("# PDF Title");
+    expect(output).toContain("Some extracted markdown content.");
+    expect(output).toContain("Token count:");
+  });
+
+  it("rejects large PDFs for automatic extraction with a clear size message", async () => {
+    process.env.WEBFETCH_PDF_MAX_BYTES = "10000";
+
+    const calls: string[][] = [];
+
+    (Bun as any).spawn = (args: string[]) => {
+      calls.push(args);
+      const script = args[2] ?? "";
+      if (script.includes("curl -sSIL")) {
+        return {
+          stdout: streamFromText(
+            [
+              "HTTP/2 200",
+              "content-type: application/pdf",
+              "content-length: 13264",
+              "",
+            ].join("\n"),
+          ),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: streamFromText(""),
+        stderr: streamFromText(`unexpected command: ${script}`),
+        exited: Promise.resolve(1),
+      };
+    };
+
+    const { webfetch } = await loadPlugin("http://localhost/searxng");
+    const context = buildContext();
+
+    const output = await webfetch.execute(
+      {
+        url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      },
+      context as any,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[2]).toContain("curl -sSIL");
+    expect(output).toContain(
+      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
+    );
+    expect(output).toContain("Route: default/pdf");
+    expect(output).toContain("The file size exceeds the configured limit of 10000 bytes.");
   });
 
   it("routes reddit posts through apify and renders nested markdown comments", async () => {
@@ -423,6 +506,21 @@ describe("searxng-search plugin", () => {
     const vtt = fixtureText("youtube/dQw4w9WgXcQ.en.vtt");
 
     (Bun as any).spawn = (args: string[]) => {
+      if (args[0] === "sh" && args[1] === "-lc") {
+        if (args[2]?.includes("DEP_CHECK:")) {
+          return {
+            stdout: streamFromText(youtubeDependencyCheckOutput()),
+            stderr: streamFromText(""),
+            exited: Promise.resolve(0),
+          };
+        }
+        return {
+          stdout: streamFromText(""),
+          stderr: streamFromText(""),
+          exited: Promise.resolve(0),
+        };
+      }
+
       if (
         args[0] === "uvx" &&
         args.includes("yt-dlp") &&

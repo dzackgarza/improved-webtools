@@ -1,4 +1,5 @@
 import { hostMatchesDomain, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
+import { WebVTTParser, type TreeNode, type VTTData } from "webvtt-parser";
 
 export const YOUTUBE_DOMAINS = [
   "youtube.com",
@@ -21,6 +22,16 @@ export const YTDLP_ARGS = [
   "node",
 ] as const;
 
+type DependencyCheckResult = {
+  name: string;
+  missing: boolean;
+};
+
+type TimestampedCaptionLine = {
+  start: string;
+  text: string;
+};
+
 function buildYtDlpCommand(extraArgs: string[]): string[] {
   const cookiesFile = (process.env.YTDLP_COOKIES_FILE ?? "").trim();
   return [
@@ -28,6 +39,17 @@ function buildYtDlpCommand(extraArgs: string[]): string[] {
     ...(cookiesFile ? ["--cookies", cookiesFile] : []),
     ...extraArgs,
   ];
+}
+
+function redactCookiesPath(text: string, cookiesFile: string): string {
+  if (!cookiesFile) return text;
+  const replacement = "[redacted-cookies-file]";
+  const normalized = text.replaceAll(cookiesFile, replacement);
+  const encoded = encodeURIComponent(cookiesFile);
+  if (encoded !== cookiesFile) {
+    return normalized.replaceAll(encoded, replacement);
+  }
+  return normalized;
 }
 
 function normalizeYoutubeUrl(url: URL): URL {
@@ -44,33 +66,110 @@ function normalizeYoutubeUrl(url: URL): URL {
   return new URL(url.toString());
 }
 
-function htmlEntityDecode(text: string): string {
-  return text
-    .replaceAll("&amp;", "&")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'");
+function formatVttTimestamp(seconds: number): string {
+  const ms = Math.round(seconds * 1000);
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  const millis = String(ms % 1000).padStart(3, "0");
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${millis}`;
+}
+
+function cueTreeToText(node: TreeNode): string {
+  if (node.type === "text") {
+    return node.value;
+  }
+  if (node.type === "timestamp") {
+    return "";
+  }
+  return node.children.map((child) => cueTreeToText(child)).join("");
+}
+
+function normalizeCueText(rawText: string): string {
+  const tokens = rawText
+    .split("\n")
+    .flatMap((line) =>
+      line
+        .replaceAll("\r", "")
+        .replaceAll("\t", " ")
+        .split(" ")
+        .map((token) => token.trim())
+        .filter((token) => token.length > 0),
+    );
+  return tokens.join(" ");
+}
+
+function parseWebVtt(vtt: string): VTTData {
+  return new WebVTTParser().parse(vtt, "metadata");
+}
+
+async function checkYouTubeDependencies(runCommand: RunCommand): Promise<string[]> {
+  const commands = ["uvx", "ffmpeg", "ffprobe", "bun", "node", "deno"];
+  const checkScript = commands
+    .map((command) =>
+      `command -v ${JSON.stringify(command)} >/dev/null 2>&1 && echo "DEP_CHECK:${command}:1" || echo "DEP_CHECK:${command}:0"`)
+    .join("; ");
+
+  const checkResult = await runCommand(["sh", "-lc", checkScript]);
+  const results = new Map<string, boolean>();
+  for (const line of checkResult.stdoutText.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("DEP_CHECK:")) {
+      continue;
+    }
+    const payload = trimmed.slice("DEP_CHECK:".length);
+    const parts = payload.split(":");
+    if (parts.length !== 2) {
+      continue;
+    }
+    const name = parts[0]?.trim();
+    const value = parts[1]?.trim();
+    if (!name || (value !== "0" && value !== "1")) {
+      continue;
+    }
+    results.set(name, value === "1");
+  }
+
+  const hasUvx = results.get("uvx") ?? false;
+  const hasFfmpeg = results.get("ffmpeg") ?? false;
+  const hasFfprobe = results.get("ffprobe") ?? false;
+  const hasBun = results.get("bun") ?? false;
+  const hasNode = results.get("node") ?? false;
+  const hasDeno = results.get("deno") ?? false;
+
+  const checks: DependencyCheckResult[] = [
+    { name: "uvx", missing: !hasUvx },
+    {
+      name: "bun | node | deno",
+      missing: !(hasBun || hasNode || hasDeno),
+    },
+    { name: "ffmpeg", missing: !hasFfmpeg },
+    { name: "ffprobe", missing: !hasFfprobe },
+  ];
+
+  return checks.filter((check) => check.missing).map((check) => check.name);
 }
 
 function vttToPlainText(vtt: string): string {
-  const lines = vtt.replace(/\r/g, "").split("\n");
-  const out: string[] = [];
-  let prev = "";
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) continue;
-    if (line === "WEBVTT") continue;
-    if (/^\d+$/.test(line)) continue;
-    if (/^\d{2}:\d{2}:\d{2}\.\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}\.\d{3}/.test(line)) continue;
-    if (/^NOTE\b/.test(line)) continue;
-    const clean = htmlEntityDecode(line.replaceAll(/<[^>]+>/g, "").trim());
-    if (!clean) continue;
-    if (clean === prev) continue;
-    out.push(clean);
-    prev = clean;
+  const parsed = parseWebVtt(vtt);
+  const out: TimestampedCaptionLine[] = [];
+
+  for (const cue of parsed.cues) {
+    const text = normalizeCueText(cueTreeToText(cue.tree));
+    if (!text) {
+      continue;
+    }
+    out.push({
+      start: formatVttTimestamp(cue.startTime),
+      text,
+    });
   }
-  return out.join("\n");
+
+  if (out.length === 0) {
+    return "";
+  }
+
+  return out.map((cue) => `${cue.start} ${cue.text}`).join("\n");
 }
 
 async function pickTranscriptFile(tempDir: string): Promise<string | undefined> {
@@ -90,11 +189,30 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
   url: URL;
   runCommand: RunCommand;
 }): Promise<WebFetchHandlerResult> {
+  const missingDependencies = await checkYouTubeDependencies(input.runCommand);
+  if (missingDependencies.length > 0) {
+    return {
+      routeName: "youtube",
+      sourceUrl: input.url.toString(),
+      content: [
+        "# YouTube Transcript",
+        "",
+        "Transcript extraction could not start.",
+        "Missing required dependencies:",
+        ...missingDependencies.map((name) => `- ${name}`),
+        "",
+        "Install these requirements and retry.",
+      ].join("\n"),
+    };
+  }
+
   const sourceUrl = normalizeYoutubeUrl(input.url);
   const tempDir = (await Bun.$`mktemp -d /tmp/webfetch-youtube-XXXXXX`.text()).trim();
+  const cookiesFile = (process.env.YTDLP_COOKIES_FILE ?? "").trim();
   try {
     const listSubs = await input.runCommand(buildYtDlpCommand(["--list-subs", sourceUrl.toString()]));
     if (listSubs.exitCode !== 0) {
+      const reason = redactCookiesPath(listSubs.stderrText.trim(), cookiesFile);
       return {
         routeName: "youtube",
         sourceUrl: sourceUrl.toString(),
@@ -102,7 +220,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
           "# YouTube Transcript",
           "",
           "Transcript extraction failed at subtitle discovery.",
-          `Reason: ${listSubs.stderrText.trim() || `yt-dlp exited ${listSubs.exitCode}`}`,
+          `Reason: ${reason || `yt-dlp exited ${listSubs.exitCode}`}`,
           "",
           "Pipeline requirements:",
           "- yt-dlp with curl-cffi impersonation support.",
@@ -148,7 +266,6 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
         };
       }
     }
-
     const audioDownload = await input.runCommand(buildYtDlpCommand([
       "-x",
       "--audio-format",
@@ -158,6 +275,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
       sourceUrl.toString(),
     ]));
     if (audioDownload.exitCode !== 0) {
+      const reason = redactCookiesPath(audioDownload.stderrText.trim(), cookiesFile);
       return {
         routeName: "youtube",
         sourceUrl: sourceUrl.toString(),
@@ -165,7 +283,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
           "# YouTube Transcript",
           "",
           "Transcript extraction failed at audio download stage.",
-          `Reason: ${audioDownload.stderrText.trim() || `yt-dlp exited ${audioDownload.exitCode}`}`,
+          `Reason: ${reason || `yt-dlp exited ${audioDownload.exitCode}`}`,
           "",
           "Check that YouTube access is available from this environment and bot-check/cookies requirements are satisfied.",
         ].join("\n"),
@@ -205,6 +323,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
       audioPath,
     ]);
     if (whisper.exitCode !== 0) {
+      const reason = redactCookiesPath(whisper.stderrText.trim(), cookiesFile);
       return {
         routeName: "youtube",
         sourceUrl: sourceUrl.toString(),
@@ -212,7 +331,7 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
           "# YouTube Transcript",
           "",
           "Whisper transcription stage failed.",
-          `Reason: ${whisper.stderrText.trim() || `whisper exited ${whisper.exitCode}`}`,
+          `Reason: ${reason || `whisper exited ${whisper.exitCode}`}`,
         ].join("\n"),
       };
     }
