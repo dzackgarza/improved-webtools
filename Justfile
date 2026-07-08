@@ -25,6 +25,9 @@ typecheck:
 test:
   bun test
 
+test-ci:
+  bun test
+
 mcp-test:
   cd mcp-server && uv run pytest
 
