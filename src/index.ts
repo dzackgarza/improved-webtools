@@ -1,6 +1,7 @@
 import { type Plugin, tool } from "@opencode-ai/plugin";
 import { getEncoding } from "js-tiktoken";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import {
   fetchArxivLibraryContent,
   fetchGitHubContent,
@@ -19,23 +20,42 @@ import {
 } from "./webfetch-handlers/index.ts";
 import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
 
-type SearxngResult = {
-  title: string;
-  url: string;
-  content: string;
-  engine: string;
-  category: string;
-  publishedDate: string | null;
-};
+const searxngResultSchema = z.object({
+  title: z.string(),
+  url: z.string(),
+  content: z.string(),
+  engine: z.string(),
+  category: z.string(),
+  publishedDate: z.string().nullable(),
+});
 
-type SearxngResponse = {
-  query: string;
-  number_of_results: number;
-  results: SearxngResult[];
-  answers: string[];
-  suggestions: string[];
-  unresponsive_engines: Array<[string, string]>;
-};
+const searxngAnswerSchema = z
+  .union([
+    z.string(),
+    z.object({ answer: z.string() }).passthrough(),
+  ])
+  .transform((answer) =>
+    typeof answer === "string" ? answer : answer.answer,
+  );
+
+const searxngResponseSchema = z.object({
+  query: z.string(),
+  number_of_results: z.number().finite(),
+  results: z.array(searxngResultSchema),
+  answers: z.array(searxngAnswerSchema),
+  suggestions: z.array(z.string()),
+  unresponsive_engines: z.array(z.tuple([z.string(), z.string()])),
+});
+
+type SearxngResult = z.infer<typeof searxngResultSchema>;
+type SearxngResponse = z.infer<typeof searxngResponseSchema>;
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 type WebFetchCacheMode = "default" | "refresh";
 
@@ -60,7 +80,6 @@ const WEBFETCH_CACHE_TTL_MS =
 const TOKEN_ENCODER = getEncoding("o200k_base");
 const ISSUE_REPORTING_HINT =
   "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.";
-const REDDIT_APIFY_ACTOR = (process.env.REDDIT_APIFY_ACTOR ?? "spry_wholemeal/reddit-scraper").trim();
 const WIKIPEDIA_API_USER_AGENT = (
   process.env.WIKIPEDIA_API_USER_AGENT ?? "opencode-improved-webfetch/1.0 (plugin)"
 ).trim();
@@ -111,12 +130,12 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 function parseLimit(limit?: number): number {
-  if (!Number.isFinite(limit)) return DEFAULT_LIMIT;
+  if (!Number.isFinite(limit)) {return DEFAULT_LIMIT;}
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit ?? DEFAULT_LIMIT)));
 }
 
 function resolveOffset(offset?: number): { value: number; error?: string } {
-  if (offset === undefined) return { value: 0 };
+  if (offset === undefined) {return { value: 0 };}
   if (!Number.isFinite(offset) || !Number.isInteger(offset) || offset < 0) {
     return {
       value: 0,
@@ -134,7 +153,7 @@ function resolveOffset(offset?: number): { value: number; error?: string } {
 
 function clampSnippet(text: string, maxLen = 280): string {
   const clean = text.trim().replace(/\s+/g, " ");
-  if (clean.length <= maxLen) return clean;
+  if (clean.length <= maxLen) {return clean;}
   return `${clean.slice(0, maxLen - 1)}…`;
 }
 
@@ -143,7 +162,7 @@ function countTokens(text: string): number {
 }
 
 function resolveWebFetchCacheMode(overwriteCache?: boolean): { value: WebFetchCacheMode } {
-  return { value: overwriteCache ? "refresh" : "default" };
+  return { value: overwriteCache === true ? "refresh" : "default" };
 }
 
 type WebFetchCachePayload = {
@@ -169,11 +188,11 @@ async function readWebFetchCache(
   url: string,
   overwriteCache: WebFetchCacheMode,
 ): Promise<WebFetchHandlerResult | undefined> {
-  if (!WEBFETCH_CACHE_ENABLED) return undefined;
-  if (overwriteCache === "refresh") return undefined;
+  if (!WEBFETCH_CACHE_ENABLED) {return undefined;}
+  if (overwriteCache === "refresh") {return undefined;}
   const path = webFetchCachePath(url);
   const file = Bun.file(path);
-  if (!(await file.exists())) return undefined;
+  if (!(await file.exists())) {return undefined;}
   try {
     const raw = await file.text();
     const parsed = JSON.parse(raw) as Partial<WebFetchCachePayload>;
@@ -205,10 +224,10 @@ async function writeWebFetchCache(
   url: string,
   result: WebFetchHandlerResult,
 ): Promise<void> {
-  if (!WEBFETCH_CACHE_ENABLED) return;
-  if (result.routeName.includes("/binary")) return;
-  if (result.routeName.startsWith("arxiv/library")) return;
-  if (!result.content.trim()) return;
+  if (!WEBFETCH_CACHE_ENABLED) {return;}
+  if (result.routeName.includes("/binary")) {return;}
+  if (result.routeName.startsWith("arxiv/library")) {return;}
+  if (!result.content.trim()) {return;}
   await Bun.$`mkdir -p ${WEBFETCH_CACHE_DIR}`.quiet();
   const payload: WebFetchCachePayload = {
     url,
@@ -267,7 +286,7 @@ async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
     "-lc",
     `curl -sSIL --compressed --max-time 30 ${JSON.stringify(url.toString())}`,
   ]);
-  if (result.exitCode !== 0) return {};
+  if (result.exitCode !== 0) {return {};}
 
   const headerBlocks = result.stdoutText
     .split(/\r?\n\r?\n/g)
@@ -278,7 +297,7 @@ async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
   const rawTrimmed = result.stdoutText.trim();
 
   const statusLine = lines.find((line) => /^HTTP\/\d+(?:\.\d+)?\s+\d{3}\b/i.test(line));
-  const statusCode = statusLine
+  const statusCode = statusLine !== undefined
     ? Number.parseInt(statusLine.replace(/^HTTP\/\d+(?:\.\d+)?\s+/, "").slice(0, 3), 10)
     : /^\d{3}$/.test(rawTrimmed)
       ? Number.parseInt(rawTrimmed, 10)
@@ -296,7 +315,7 @@ async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
       Number.isFinite(statusCode) && (statusCode ?? 0) >= 100 && (statusCode ?? 0) <= 599
         ? statusCode
         : undefined,
-    contentType: contentType && contentType.length > 0 ? contentType : undefined,
+    contentType: contentType !== undefined && contentType.length > 0 ? contentType : undefined,
     contentLength: Number.isFinite(contentLength) && contentLength >= 0 ? contentLength : undefined,
   };
 }
@@ -324,7 +343,7 @@ function formatArxivServiceMessage(input: {
   statusCode?: number;
   content: string;
 }): string | undefined {
-  if (!hostMatchesDomain(input.url.hostname, "arxiv.org")) return undefined;
+  if (!hostMatchesDomain(input.url.hostname, "arxiv.org")) {return undefined;}
   const body = input.content.trim().toLowerCase();
 
   if (input.statusCode === 429 || body === "rate exceeded." || body === "rate exceeded") {
@@ -349,16 +368,16 @@ function formatArxivServiceMessage(input: {
 }
 
 function buildArxivFallbackUrl(url: URL): URL | undefined {
-  if (!hostMatchesDomain(url.hostname, "arxiv.org")) return undefined;
-  if (url.pathname !== "/api/query") return undefined;
+  if (!hostMatchesDomain(url.hostname, "arxiv.org")) {return undefined;}
+  if (url.pathname !== "/api/query") {return undefined;}
 
   const rawIdList = (url.searchParams.get("id_list") ?? "").trim();
-  if (rawIdList) {
+  if (rawIdList.length > 0) {
     const firstId = rawIdList
       .split(",")
       .map((item) => item.trim())
       .find((item) => item.length > 0);
-    if (firstId) {
+    if (firstId !== undefined) {
       const normalizedId = firstId.replace(/^arxiv:/i, "");
       const fallback = new URL("https://arxiv.org/");
       fallback.pathname = `/abs/${normalizedId}`;
@@ -367,7 +386,7 @@ function buildArxivFallbackUrl(url: URL): URL | undefined {
   }
 
   const rawSearch = (url.searchParams.get("search_query") ?? "").trim();
-  if (rawSearch) {
+  if (rawSearch.length > 0) {
     const fallback = new URL("https://arxiv.org/search/");
     fallback.searchParams.set("query", rawSearch);
     fallback.searchParams.set("searchtype", "all");
@@ -426,17 +445,17 @@ async function formatWebFetchOutput(input: {
 }
 
 function augmentQueryWithDomains(query: string, domains: string[]): string {
-  if (domains.length === 0) return query;
+  if (domains.length === 0) {return query;}
   // `site:` is query syntax forwarded to engines; behavior depends on engine support.
   const siteClauses = domains.map((domain) => `site:${domain}`);
   return `${query} (${siteClauses.join(" OR ")})`;
 }
 
 function mapRecencyToTimeRange(recency?: number): string | undefined {
-  if (!Number.isFinite(recency)) return undefined;
-  const days = Math.max(0, Math.floor(recency ?? 0));
-  if (days <= 1) return "day";
-  if (days <= 31) return "month";
+  if (recency === undefined || !Number.isFinite(recency)) {return undefined;}
+  const days = Math.max(0, Math.floor(recency));
+  if (days <= 1) {return "day";}
+  if (days <= 31) {return "month";}
   return "year";
 }
 
@@ -445,67 +464,24 @@ function buildQueryUrl(baseUrl: string, args: { query: string; timeRange?: strin
   url.searchParams.set("q", args.query);
   url.searchParams.set("format", "json");
 
-  if (args.timeRange) {
+  if (args.timeRange !== undefined) {
     url.searchParams.set("time_range", args.timeRange);
   }
-  if (args.pageNumber && args.pageNumber > 1) {
+  if (args.pageNumber !== undefined && args.pageNumber > 1) {
     url.searchParams.set("pageno", String(args.pageNumber));
   }
 
   return url;
 }
 
-function asResponse(input: unknown): SearxngResponse {
-  if (!input || typeof input !== "object") {
-    throw new Error("Invalid search API response: expected object.");
-  }
-  const response = input as Record<string, unknown>;
-
-  if (typeof response.query !== "string") {
-    throw new Error("Invalid search API response: missing query.");
-  }
-  if (typeof response.number_of_results !== "number" || !Number.isFinite(response.number_of_results)) {
-    throw new Error("Invalid search API response: missing number_of_results.");
-  }
-  if (!Array.isArray(response.results)) {
-    throw new Error("Invalid search API response: missing results array.");
-  }
-  if (!Array.isArray(response.answers)) {
-    throw new Error("Invalid search API response: missing answers array.");
-  }
-  if (!Array.isArray(response.suggestions)) {
-    throw new Error("Invalid search API response: missing suggestions array.");
-  }
-  if (!Array.isArray(response.unresponsive_engines)) {
-    throw new Error("Invalid search API response: missing unresponsive_engines array.");
-  }
-
-  for (const item of response.results) {
-    if (!item || typeof item !== "object") {
-      throw new Error("Invalid search API response: result item is not an object.");
-    }
-    const result = item as Record<string, unknown>;
-    if (typeof result.title !== "string" || typeof result.url !== "string") {
-      throw new Error("Invalid search API response: result item missing title/url.");
-    }
-    if (typeof result.content !== "string") {
-      throw new Error("Invalid search API response: result item missing content.");
-    }
-    if (typeof result.engine !== "string" || typeof result.category !== "string") {
-      throw new Error("Invalid search API response: result item missing engine/category.");
-    }
-    if (!(typeof result.publishedDate === "string" || result.publishedDate === null)) {
-      throw new Error("Invalid search API response: invalid publishedDate.");
-    }
-  }
-
-  return response as unknown as SearxngResponse;
+function asResponse(input: JsonValue): SearxngResponse {
+  return searxngResponseSchema.parse(input);
 }
 
 function resolveCategory(category?: string): { bang?: string; error?: string } {
-  if (!category) return {};
+  if (category === undefined) {return {};}
   const raw = category.trim().toLowerCase();
-  if (!raw) return {};
+  if (raw.length === 0) {return {};}
 
   if (raw.startsWith("!")) {
     return {
@@ -541,7 +517,7 @@ function formatResults(input: {
 
   const lines: string[] = [];
   lines.push(`Query: ${input.query}`);
-  if (input.category) {
+  if (input.category !== undefined) {
     lines.push(`Category: ${input.category}`);
   }
   lines.push(`Offset: ${input.offset}`);
@@ -578,11 +554,11 @@ function formatResults(input: {
     lines.push(`${rank}. ${title}`);
     lines.push(`   URL: ${url}`);
 
-    if (result.publishedDate) {
+    if (result.publishedDate !== null) {
       lines.push(`   Published: ${result.publishedDate}`);
     }
 
-    if (result.content.trim()) {
+    if (result.content.trim().length > 0) {
       lines.push(`   Snippet: ${clampSnippet(result.content)}`);
     }
   }
@@ -625,8 +601,6 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         fetchRedditPostMarkdown({
           url,
           runCommand,
-          fetchFallbackWithW3M: fetchWebContentWithW3M,
-          apifyActor: REDDIT_APIFY_ACTOR,
         }),
     },
     {
@@ -695,7 +669,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         .filter(Boolean);
 
       const category = resolveCategory(args.category);
-      if (category.error) {
+      if (category.error !== undefined) {
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
           ISSUE_REPORTING_HINT,
@@ -704,7 +678,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       }
 
       const offset = resolveOffset(args.offset);
-      if (offset.error) {
+      if (offset.error !== undefined) {
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
           ISSUE_REPORTING_HINT,
@@ -713,7 +687,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       }
 
       let effectiveQuery = augmentQueryWithDomains(query, domains);
-      if (category.bang) {
+      if (category.bang !== undefined) {
         effectiveQuery = `${category.bang} ${effectiveQuery}`;
       }
 
@@ -762,7 +736,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
             throw new Error(`search request failed (HTTP ${response.status})`);
           }
 
-          const pageData = asResponse(await response.json());
+          const pageData = asResponse(
+            z.json().parse(JSON.parse(await response.text())),
+          );
           if (!firstResponse) {
             firstResponse = pageData;
           }
@@ -927,9 +903,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                     statusCode: httpMetadata.statusCode,
                     content: defaultResult.stdoutText,
                   });
-                  if (serviceMessage) {
+                  if (serviceMessage !== undefined) {
                     const fallbackUrl = buildArxivFallbackUrl(parsed);
-                    if (fallbackUrl) {
+                    if (fallbackUrl !== undefined) {
                       const fallbackResult = await fetchWebContentWithW3M(fallbackUrl);
                       if (
                         fallbackResult.exitCode === 0 &&

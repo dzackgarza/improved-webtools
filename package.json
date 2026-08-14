@@ -5,15 +5,16 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "zod": "^4.4.3"
+    "@opencode-ai/sdk": "1.2.20",
+    "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.20",
-    "js-tiktoken": "^1.0.21"
+    "js-tiktoken": "^1.0.21",
+    "zod": "^4.4.3"
   },
   "module": "./src/index.ts",
   "version": "0.1.0",

@@ -7,10 +7,11 @@
       "dependencies": {
         "@opencode-ai/plugin": "^1.2.20",
         "js-tiktoken": "^1.0.21",
+        "zod": "^4.4.3",
       },
       "devDependencies": {
+        "@opencode-ai/sdk": "1.2.20",
         "@types/bun": "latest",
-        "zod": "^4.4.3",
       },
       "peerDependencies": {
         "typescript": "^5",

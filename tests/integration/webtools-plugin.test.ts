@@ -154,6 +154,6 @@ describe("improved-webtools live e2e", () => {
     );
     const toolUse = findCompletedToolUse(events, "webfetch");
     expect(toolUse.part.state.output).toContain("- Author: u/Thinklikeachef");
-    expect(toolUse.part.state.output).toContain("- Comments extracted: 25");
+    expect(toolUse.part.state.output).toContain("- Comments extracted: 46");
   }, 200_000);
 });

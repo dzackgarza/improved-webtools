@@ -35,20 +35,9 @@ function assertMatches(text: string, pattern: RegExp, label: string) {
 }
 
 async function main() {
-  const actor = (process.env.REDDIT_APIFY_ACTOR ?? "spry_wholemeal/reddit-scraper").trim();
-  if (!actor) {
-    throw new Error("REDDIT_APIFY_ACTOR must be non-empty when set.");
-  }
-
   const result = await fetchRedditPostMarkdown({
     url: new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/"),
     runCommand,
-    fetchFallbackWithW3M: async () => ({
-      stdoutText: "",
-      stderrText: "fallback should not run for a Reddit post permalink",
-      exitCode: 1,
-    }),
-    apifyActor: actor,
   });
 
   assertContains(result.content, "# Reddit Post", "reddit success case");
@@ -61,8 +50,8 @@ async function main() {
   }
 
   console.log("PASS: Reddit live verification succeeded.");
-  console.log("PASS: Real Apify actor output produced the expected post metadata.");
-  console.log("PASS: Nested comments were rendered from the live actor response.");
+  console.log("PASS: PullPush returned the expected post metadata.");
+  console.log("PASS: Nested comments were rendered from the live API response.");
 }
 
 await main();

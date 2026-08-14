@@ -1,240 +1,262 @@
-import type { CommandExecutionResult, RunCommand, WebFetchHandlerResult } from "../types.ts";
+import { strict as assert } from "node:assert";
+import { z } from "zod";
+import type { RunCommand, WebFetchHandlerResult } from "../types.ts";
 
 export const REDDIT_DOMAINS = ["reddit.com", "www.reddit.com", "old.reddit.com", "api.reddit.com"] as const;
 
-type RedditPostRef = {
-  subreddit: string;
-  postId: string;
-  slug?: string;
-};
+const redditPostPathSchema = z
+  .tuple([
+    z.literal("r"),
+    z.string().min(1),
+    z.literal("comments"),
+    z.string().regex(/^[a-z0-9]+$/i),
+  ])
+  .rest(z.string());
 
-type RedditRecord = Record<string, unknown>;
+const pullPushPostSchema = z.object({
+  id: z.string(),
+  author: z.string(),
+  subreddit: z.string(),
+  title: z.string(),
+  selftext: z.string(),
+  score: z.number(),
+  permalink: z.string(),
+});
 
-function extractRedditPostRef(url: URL): RedditPostRef | undefined {
-  const segments = url.pathname.split("/").filter(Boolean);
-  if (segments.length < 4) return undefined;
-  if (segments[0] !== "r") return undefined;
-  if (segments[2] !== "comments") return undefined;
-  return {
-    subreddit: segments[1]!,
-    postId: segments[3]!,
-    slug: segments[4],
-  };
+const pullPushCommentBaseSchema = z.object({
+  id: z.string(),
+  author: z.string(),
+  parent_id: z.string(),
+  link_id: z.string(),
+  body: z.string(),
+  score: z.number(),
+  created_utc: z.number(),
+});
+
+const pullPushCommentSchema = z.union([
+  pullPushCommentBaseSchema
+    .extend({ retrieved_on: z.number() })
+    .transform(({ retrieved_on, ...comment }) => ({ ...comment, snapshotTime: retrieved_on })),
+  pullPushCommentBaseSchema.transform((comment) => ({
+    ...comment,
+    snapshotTime: comment.created_utc,
+  })),
+]);
+
+const pullPushPostResponseSchema = z.object({ data: z.tuple([pullPushPostSchema]) });
+const pullPushCommentResponseSchema = z.object({ data: z.array(pullPushCommentSchema) });
+const redditParentSchema = z.tuple([z.enum(["t1", "t3"]), z.string().min(1)]);
+
+type PullPushComment = z.infer<typeof pullPushCommentSchema>;
+// Exhaustiveness pattern from the TypeScript Handbook:
+// https://www.typescriptlang.org/docs/handbook/unions-and-intersections.html#union-exhaustiveness-checking
+function assertNever(value: never): never {
+  return assert.fail(`Unhandled Reddit parent kind: ${value}`);
 }
 
-function normalizeRedditId(raw: unknown): string {
-  const value = String(raw ?? "").trim();
-  if (!value) return "";
-  const normalized = value.includes("_") ? value.split("_").slice(1).join("_") : value;
-  return normalized.toLowerCase();
+function extractRedditPostId(url: URL): string {
+  const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
+  const path = redditPostPathSchema.parse(segments);
+  return path[3].toLowerCase();
 }
 
-function redditText(raw: unknown): string {
-  return String(raw ?? "").replace(/\r\n?/g, "\n").trim();
+function normalizeRedditId(value: string): string {
+  const separator = value.indexOf("_");
+  return (separator === -1 ? value : value.slice(separator + 1)).toLowerCase();
 }
 
-function renderRedditCommentTree(comments: RedditRecord[], postId: string): string[] {
-  const byId = new Map<string, RedditRecord>();
+function redditText(value: string): string {
+  return value.replace(/\r\n?/g, "\n").trim();
+}
+
+function selectLatestCommentSnapshots(comments: PullPushComment[]): PullPushComment[] {
+  const latestById = new Map<string, PullPushComment>();
+
   for (const comment of comments) {
-    const id = normalizeRedditId(comment.comment_id);
-    if (!id) continue;
-    byId.set(id, comment);
-  }
-
-  const children = new Map<string, RedditRecord[]>();
-  const root = postId.toLowerCase();
-
-  for (const comment of comments) {
-    const commentId = normalizeRedditId(comment.comment_id);
-    if (!commentId) continue;
-    const parentRaw = String(comment.parent_id ?? "").trim();
-    const parentNormalized = normalizeRedditId(parentRaw);
-
-    let parentKey = root;
-    if (parentRaw.startsWith("t1_")) {
-      parentKey = parentNormalized || root;
-    } else if (parentRaw.startsWith("t3_")) {
-      parentKey = root;
-    } else if (parentNormalized && byId.has(parentNormalized)) {
-      parentKey = parentNormalized;
+    const id = normalizeRedditId(comment.id);
+    const current = latestById.get(id);
+    if (current === undefined) {
+      latestById.set(id, comment);
+      continue;
     }
 
-    const arr = children.get(parentKey) ?? [];
-    arr.push(comment);
-    children.set(parentKey, arr);
+    assert.equal(comment.parent_id, current.parent_id);
+    assert.equal(comment.link_id, current.link_id);
+    const currentTime = current.snapshotTime;
+    const nextTime = comment.snapshotTime;
+    assert.notEqual(nextTime, currentTime, `Reddit comment ${id} has ambiguous snapshots.`);
+    if (nextTime > currentTime) {
+      latestById.set(id, comment);
+    }
   }
 
-  const sortByScoreThenTime = (a: RedditRecord, b: RedditRecord) => {
-    const sa = Number(a.score ?? 0);
-    const sb = Number(b.score ?? 0);
-    if (sb !== sa) return sb - sa;
-    const ta = Number(a.created_utc_ts ?? 0);
-    const tb = Number(b.created_utc_ts ?? 0);
-    return ta - tb;
-  };
+  return [...latestById.values()];
+}
 
-  const render = (parentId: string, depth: number, out: string[]) => {
-    const items = [...(children.get(parentId) ?? [])].sort(sortByScoreThenTime);
-    for (const comment of items) {
-      const commentId = normalizeRedditId(comment.comment_id);
-      if (!commentId) continue;
-      const indent = "  ".repeat(depth);
-      const author = String(comment.author ?? "[deleted]").trim() || "[deleted]";
-      const score = Number(comment.score ?? 0);
-      const body = redditText(comment.text);
-      out.push(`${indent}- u/${author} (score ${score}):`);
-      if (body) {
-        for (const line of body.split(/\r?\n/)) {
-          out.push(`${indent}  ${line}`);
-        }
-      } else {
-        out.push(`${indent}  [no text]`);
-      }
-      render(commentId, depth + 1, out);
+function parentKey(
+  comment: PullPushComment,
+  commentsById: ReadonlyMap<string, PullPushComment>,
+  rootPostId: string,
+): string {
+  const [kind, id] = redditParentSchema.parse(comment.parent_id.split("_"));
+  const normalizedId = id.toLowerCase();
+
+  switch (kind) {
+    case "t1":
+      assert.ok(
+        commentsById.has(normalizedId),
+        `Reddit comment ${comment.id} references missing parent ${comment.parent_id}.`,
+      );
+      return normalizedId;
+    case "t3":
+      assert.equal(normalizedId, rootPostId);
+      return rootPostId;
+    default:
+      return assertNever(kind satisfies never);
+  }
+}
+
+function renderRedditCommentTree(comments: PullPushComment[], postId: string): string[] {
+  const rootPostId = postId.toLowerCase();
+  const commentsById = new Map(
+    comments.map((comment) => [normalizeRedditId(comment.id), comment] as const),
+  );
+  assert.equal(commentsById.size, comments.length, "Reddit comment IDs must be unique.");
+
+  const children = new Map<string, PullPushComment[]>();
+  for (const comment of comments) {
+    const key = parentKey(comment, commentsById, rootPostId);
+    const siblings = children.get(key);
+    if (siblings === undefined) {
+      children.set(key, [comment]);
+      continue;
     }
+    siblings.push(comment);
+  }
+
+  const sortByScoreThenTime = (left: PullPushComment, right: PullPushComment) => {
+    const scoreOrder = right.score - left.score;
+    return scoreOrder === 0 ? left.created_utc - right.created_utc : scoreOrder;
   };
 
   const lines: string[] = [];
-  render(postId, 0, lines);
+  const renderedIds = new Set<string>();
+
+  const render = (currentParentId: string, depth: number) => {
+    const items = children.get(currentParentId);
+    if (items === undefined) {return;}
+
+    for (const comment of [...items].sort(sortByScoreThenTime)) {
+      const commentId = normalizeRedditId(comment.id);
+      assert.ok(!renderedIds.has(commentId), `Reddit comment cycle includes ${commentId}.`);
+      renderedIds.add(commentId);
+
+      const indent = "  ".repeat(depth);
+      const author = redditText(comment.author);
+      const body = redditText(comment.body);
+      lines.push(`${indent}- u/${author} (score ${comment.score}):`);
+
+      const bodyLines = body.length === 0 ? ["[no text]"] : body.split(/\r?\n/);
+      for (const line of bodyLines) {
+        lines.push(`${indent}  ${line}`);
+      }
+      render(commentId, depth + 1);
+    }
+  };
+
+  render(rootPostId, 0);
+  assert.equal(
+    renderedIds.size,
+    comments.length,
+    "Reddit comment rendering must include every fetched comment.",
+  );
   return lines;
 }
 
-function buildRedditSearchQuery(postRef: RedditPostRef): string {
-  if (postRef.slug) return postRef.slug;
-  return postRef.postId;
+function buildPullPushSubmissionUrl(postId: string): URL {
+  const url = new URL("https://api.pullpush.io/reddit/search/submission/");
+  url.searchParams.set("ids", postId);
+  url.searchParams.set("size", "1");
+  return url;
+}
+
+function buildPullPushCommentUrl(postId: string): URL {
+  const url = new URL("https://api.pullpush.io/reddit/search/comment/");
+  url.searchParams.set("link_id", postId);
+  url.searchParams.set("size", "100");
+  url.searchParams.set("sort", "asc");
+  return url;
+}
+
+async function requestPullPush(runCommand: RunCommand, url: URL) {
+  const result = await runCommand([
+    "curl",
+    "--fail-with-body",
+    "--location",
+    "--silent",
+    "--show-error",
+    "--max-time",
+    "30",
+    url.toString(),
+  ]);
+  assert.equal(
+    result.exitCode,
+    0,
+    `PullPush request failed for ${url.pathname}: ${result.stderrText.trim()}`,
+  );
+  return result.stdoutText;
 }
 
 export async function fetchRedditPostMarkdown(input: {
   url: URL;
   runCommand: RunCommand;
-  fetchFallbackWithW3M: (url: URL) => Promise<CommandExecutionResult>;
-  apifyActor: string;
 }): Promise<WebFetchHandlerResult> {
-  const postRef = extractRedditPostRef(input.url);
-  if (!postRef) {
-    const fallback = await input.fetchFallbackWithW3M(input.url);
-    if (fallback.exitCode !== 0) {
-      throw new Error(`reddit fallback fetch failed (exit ${fallback.exitCode}): ${fallback.stderrText.trim()}`);
-    }
-    return {
-      routeName: "reddit",
-      sourceUrl: input.url.toString(),
-      content: fallback.stdoutText,
-    };
+  const postId = extractRedditPostId(input.url);
+  const [postPayload, commentPayload] = await Promise.all([
+    requestPullPush(input.runCommand, buildPullPushSubmissionUrl(postId)),
+    requestPullPush(input.runCommand, buildPullPushCommentUrl(postId)),
+  ]);
+
+  const post = pullPushPostResponseSchema.parse(JSON.parse(postPayload)).data[0];
+  const commentSnapshots = pullPushCommentResponseSchema.parse(JSON.parse(commentPayload)).data;
+  const comments = selectLatestCommentSnapshots(commentSnapshots);
+  assert.equal(normalizeRedditId(post.id), postId);
+  for (const comment of comments) {
+    assert.equal(normalizeRedditId(comment.link_id), postId);
   }
 
-  const actorInput = {
-    mode: "search",
-    search: {
-      queries: [buildRedditSearchQuery(postRef)],
-      sort: "relevance",
-      timeframe: "all",
-      maxPostsPerQuery: 25,
-      restrictToSubreddit: postRef.subreddit,
-      includeNsfw: false,
-      selfPostsOnly: false,
-      commentsMode: "all",
-      commentsMaxTopLevel: 100,
-      commentsMaxDepth: 3,
-      commentsHighEngagementMinScore: 10,
-      commentsHighEngagementMinComments: 5,
-      commentsHighEngagementFilterPosts: false,
-      overrides: [],
-      targets: [],
-    },
-    includeRaw: false,
-    proxyConfiguration: {
-      useApifyProxy: true,
-      apifyProxyGroups: ["RESIDENTIAL"],
-    },
-    proxyCountry: "US",
-    proxyRotationStrategy: "sticky_pool",
-    proxyPoolSize: 10,
-    requestDelayMs: 100,
+  const permalink = new URL(post.permalink, "https://www.reddit.com").toString();
+  const renderedComments = renderRedditCommentTree(comments, postId);
+  const lines: string[] = [
+    "# Reddit Post",
+    "",
+    `- URL: ${input.url.toString()}`,
+    `- Permalink: ${permalink}`,
+    `- Subreddit: r/${redditText(post.subreddit)}`,
+    `- Author: u/${redditText(post.author)}`,
+    `- Score: ${post.score}`,
+    `- Comments extracted: ${comments.length}`,
+    "",
+    "## Title",
+    "",
+    redditText(post.title),
+    "",
+    "## Body",
+    "",
+    redditText(post.selftext),
+    "",
+    "## Comments (nested)",
+    "",
+  ];
+
+  if (renderedComments.length === 0) {
+    lines.push("[no comments]");
+  }
+  lines.push(...renderedComments);
+
+  return {
+    routeName: "reddit",
+    sourceUrl: permalink,
+    content: lines.join("\n"),
   };
-
-  const inputPath = `/tmp/reddit-apify-input-${Date.now()}-${crypto.randomUUID()}.json`;
-  await Bun.write(inputPath, JSON.stringify(actorInput));
-  try {
-    const result = await input.runCommand([
-      "apify",
-      "call",
-      input.apifyActor,
-      "--silent",
-      "--output-dataset",
-      "--input-file",
-      inputPath,
-    ]);
-    if (result.exitCode !== 0) {
-      throw new Error(`apify call failed (exit ${result.exitCode}): ${result.stderrText.trim()}`);
-    }
-
-    let items: RedditRecord[];
-    try {
-      const parsed = JSON.parse(result.stdoutText);
-      if (!Array.isArray(parsed)) {
-        throw new Error("dataset output is not an array");
-      }
-      items = parsed as RedditRecord[];
-    } catch (error) {
-      throw new Error(`apify output parse failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    const postMatch = items
-      .filter((item) => item.record_type === "post")
-      .find((item) => String(item.permalink ?? "").includes(`/comments/${postRef.postId}/`));
-    if (!postMatch) {
-      throw new Error(`no Reddit post match for permalink id ${postRef.postId}`);
-    }
-
-    const targetPostId = normalizeRedditId(postMatch.post_id) || postRef.postId;
-    const comments = items.filter(
-      (item) => item.record_type === "comment" && normalizeRedditId(item.post_id) === targetPostId,
-    );
-
-    const title = redditText(postMatch.title) || "[untitled]";
-    const body = redditText(postMatch.text);
-    const author = String(postMatch.author ?? "[deleted]").trim() || "[deleted]";
-    const subreddit = String(postMatch.subreddit ?? postRef.subreddit).trim() || postRef.subreddit;
-    const permalink = redditText(postMatch.permalink) || input.url.toString();
-    const score = Number(postMatch.score ?? 0);
-    const numComments = Number(postMatch.num_comments ?? comments.length);
-
-    const lines: string[] = [
-      "# Reddit Post",
-      "",
-      `- URL: ${input.url.toString()}`,
-      `- Permalink: ${permalink}`,
-      `- Subreddit: r/${subreddit}`,
-      `- Author: u/${author}`,
-      `- Score: ${score}`,
-      `- Comments reported by post: ${numComments}`,
-      `- Comments extracted: ${comments.length}`,
-      "",
-      "## Title",
-      "",
-      title,
-      "",
-      "## Body",
-      "",
-      body || "[no post body]",
-      "",
-      "## Comments (nested)",
-      "",
-    ];
-
-    if (comments.length === 0) {
-      lines.push("[no comments extracted]");
-    } else {
-      lines.push(...renderRedditCommentTree(comments, targetPostId));
-    }
-
-    return {
-      routeName: "reddit",
-      sourceUrl: permalink,
-      content: lines.join("\n"),
-    };
-  } finally {
-    await Bun.$`rm -f ${inputPath}`.quiet();
-  }
 }

@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 
 import {
   extractArxivIdFromUrl,
   fetchArxivLibraryContent,
   buildGitHubCommandPlan,
   fetchGitHubContent,
-  fetchRedditPostMarkdown,
   fetchWikipediaMarkdown,
   fetchYoutubeTranscriptMarkdown,
 } from "@webfetch-handlers";
@@ -17,8 +17,21 @@ function fixtureText(relativePath: string): string {
   return readFileSync(path, "utf8");
 }
 
-function fixtureJson<T>(relativePath: string): T {
-  return JSON.parse(fixtureText(relativePath)) as T;
+const githubIssueSchema = z.object({
+  number: z.number(),
+  state: z.string(),
+  title: z.string(),
+  comments: z.array(z.json()),
+}).passthrough();
+
+function fixtureJson(relativePath: string): z.infer<ReturnType<typeof z.json>> {
+  return z.json().parse(JSON.parse(fixtureText(relativePath)));
+}
+
+function inputUrl(input: string | Request | URL): string {
+  if (typeof input === "string") {return input;}
+  if (input instanceof URL) {return input.href;}
+  return input.url;
 }
 
 describe("webfetch handler modules", () => {
@@ -27,12 +40,12 @@ describe("webfetch handler modules", () => {
 
   beforeEach(() => {
     globalThis.fetch = originalFetch;
-    (Bun as any).spawn = originalSpawn;
+    Reflect.set(Bun, "spawn", originalSpawn);
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    (Bun as any).spawn = originalSpawn;
+    Reflect.set(Bun, "spawn", originalSpawn);
   });
 
   it("builds github issue plans and fetches via runner with real gh fixture output", async () => {
@@ -56,7 +69,7 @@ describe("webfetch handler modules", () => {
 
     expect(output.routeName).toBe("github");
     expect(output.sourceUrl).toBe("https://github.com/anomalyco/opencode/issues/8094");
-    const parsed = JSON.parse(output.content) as Record<string, unknown>;
+    const parsed = githubIssueSchema.parse(JSON.parse(output.content));
     expect(parsed.number).toBe(14460);
     expect(parsed.state).toBe("OPEN");
     expect(typeof parsed.title).toBe("string");
@@ -128,44 +141,6 @@ describe("webfetch handler modules", () => {
     }
   });
 
-  it("renders reddit post/comment markdown from real apify dataset fixture", async () => {
-    const fixture = fixtureJson<Array<Record<string, unknown>>>("reddit/apify-search-openai.json");
-    const fixtureRaw = JSON.stringify(fixture);
-
-    expect(Array.isArray(fixture)).toBe(true);
-    expect(fixture[0]?.record_type).toBe("post");
-    expect(typeof fixture[0]?.permalink).toBe("string");
-    expect(fixture.some((item) => item.record_type === "comment")).toBe(true);
-
-    const output = await fetchRedditPostMarkdown({
-      url: new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/"),
-      apifyActor: "mock/actor",
-      runCommand: async () => ({ stdoutText: fixtureRaw, stderrText: "", exitCode: 0 }),
-      fetchFallbackWithW3M: async () => ({ stdoutText: "unexpected fallback", stderrText: "", exitCode: 0 }),
-    });
-
-    expect(output.routeName).toBe("reddit");
-    expect(output.sourceUrl).toBe("https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/");
-    expect(output.content).toContain("# Reddit Post");
-    expect(output.content).toContain("Anyone Else Excited for o3 Mini Release?");
-    expect(output.content).toContain("## Comments (nested)");
-    expect(output.content).toContain("- u/The_GSingh (score 20):");
-    expect(output.content).toContain("  - u/Thinklikeachef (score 13):");
-  });
-
-  it("uses reddit fallback path when URL is not a post permalink", async () => {
-    const output = await fetchRedditPostMarkdown({
-      url: new URL("https://www.reddit.com/r/test"),
-      apifyActor: "mock/actor",
-      runCommand: async () => ({ stdoutText: "", stderrText: "", exitCode: 0 }),
-      fetchFallbackWithW3M: async () => ({ stdoutText: "fallback text", stderrText: "", exitCode: 0 }),
-    });
-
-    expect(output.routeName).toBe("reddit");
-    expect(output.sourceUrl).toBe("https://www.reddit.com/r/test");
-    expect(output.content).toBe("fallback text");
-  });
-
   it("extracts youtube captions from real yt-dlp subtitle fixture", async () => {
     const calls: string[][] = [];
     const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
@@ -183,7 +158,7 @@ describe("webfetch handler modules", () => {
         if (args.includes("--write-subs")) {
           const outputIndex = args.indexOf("-o");
           const template = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
-          if (template) {
+          if (template !== undefined) {
             const slash = template.lastIndexOf("/");
             const dir = slash >= 0 ? template.slice(0, slash) : ".";
             await Bun.$`mkdir -p ${dir}`.quiet();
@@ -251,7 +226,7 @@ describe("webfetch handler modules", () => {
         if (args.includes("-x") && args.includes("--audio-format")) {
           const outputIndex = args.indexOf("-o");
           const template = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
-          if (template) {
+          if (template !== undefined) {
             const audioPath = template.replace("%(id)s.%(ext)s", "dQw4w9WgXcQ.mp3");
             mkdirSync(dirname(audioPath), { recursive: true });
             writeFileSync(audioPath, "mp3 fixture bytes");
@@ -266,7 +241,7 @@ describe("webfetch handler modules", () => {
         if (args[0] === "uvx" && args.includes("whisper")) {
           const outputDirIndex = args.indexOf("--output_dir");
           const outputDir = outputDirIndex >= 0 ? args[outputDirIndex + 1] : undefined;
-          if (outputDir) {
+          if (outputDir !== undefined) {
             mkdirSync(outputDir, { recursive: true });
             writeFileSync(join(outputDir, "dQw4w9WgXcQ.txt"), whisperText);
           }
@@ -291,22 +266,20 @@ describe("webfetch handler modules", () => {
   });
 
   it("fetches wikipedia parse API then converts through external script runner using real parse fixture", async () => {
-    const parseFixture = fixtureJson<Record<string, unknown>>("wikipedia/parse-fourier-transform.json");
+    const parseFixture = fixtureJson("wikipedia/parse-fourier-transform.json");
     const converted = fixtureText("wikipedia/fourier-transform.converted.md");
 
     const fetchCalls: Array<{ url: string; userAgent?: string }> = [];
-    (globalThis as any).fetch = async (input: string | Request | URL, init?: RequestInit) => {
+    Reflect.set(globalThis, "fetch", async (input: string | Request | URL, init?: RequestInit) => {
       fetchCalls.push({
-        url: String(input),
-        userAgent:
-          (init?.headers as Record<string, string> | undefined)?.["User-Agent"] ??
-          (init?.headers as Record<string, string> | undefined)?.["user-agent"],
+        url: inputUrl(input),
+        userAgent: new Headers(init?.headers).get("user-agent") ?? undefined,
       });
       return new Response(JSON.stringify(parseFixture), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
-    };
+    });
 
     const runCalls: string[][] = [];
     const output = await fetchWikipediaMarkdown({
@@ -338,10 +311,10 @@ describe("webfetch handler modules", () => {
   });
 
   it("supports wikipedia index.php title URLs and normalizes source URL", async () => {
-    const parseFixture = fixtureJson<Record<string, unknown>>("wikipedia/parse-wave-equation.json");
+    const parseFixture = fixtureJson("wikipedia/parse-wave-equation.json");
     const converted = fixtureText("wikipedia/wave-equation.converted.md");
-    (globalThis as any).fetch = async () =>
-      new Response(JSON.stringify(parseFixture), { status: 200, headers: { "content-type": "application/json" } });
+    Reflect.set(globalThis, "fetch", async () =>
+      new Response(JSON.stringify(parseFixture), { status: 200, headers: { "content-type": "application/json" } }));
 
     const output = await fetchWikipediaMarkdown({
       url: new URL("https://en.wikipedia.org/w/index.php?title=Wave_equation"),
@@ -403,31 +376,39 @@ describe("webfetch handler modules", () => {
   });
 
   it("throws for unsupported wikipedia URL shapes", async () => {
-    await expect(
-      fetchWikipediaMarkdown({
+    let rejected = false;
+    try {
+      await fetchWikipediaMarkdown({
         url: new URL("https://en.wikipedia.org/"),
         userAgent: "test-agent",
         converterScriptPath: "/tmp/mock_converter.py",
         convertTimeoutMs: 120000,
         runCommand: async () => ({ stdoutText: "", stderrText: "", exitCode: 0 }),
-      }),
-    ).rejects.toThrow(Error);
+      });
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
   });
 
   it("throws for wikipedia parse API error payloads from real API fixture", async () => {
-    const missingPage = fixtureJson<Record<string, unknown>>("wikipedia/parse-missing-page.json");
-    (globalThis as any).fetch = async () =>
-      new Response(JSON.stringify(missingPage), { status: 200, headers: { "content-type": "application/json" } });
+    const missingPage = fixtureJson("wikipedia/parse-missing-page.json");
+    Reflect.set(globalThis, "fetch", async () =>
+      new Response(JSON.stringify(missingPage), { status: 200, headers: { "content-type": "application/json" } }));
 
-    await expect(
-      fetchWikipediaMarkdown({
+    let rejected = false;
+    try {
+      await fetchWikipediaMarkdown({
         url: new URL("https://en.wikipedia.org/wiki/Does_Not_Exist"),
         userAgent: "test-agent",
         converterScriptPath: "/tmp/mock_converter.py",
         convertTimeoutMs: 120000,
         runCommand: async () => ({ stdoutText: "", stderrText: "", exitCode: 0 }),
-      }),
-    ).rejects.toThrow(Error);
+      });
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
   });
 
   it("normalizes arxiv IDs across supported URL shapes", () => {
@@ -459,22 +440,25 @@ describe("webfetch handler modules", () => {
 </feed>`;
     const fetchCalls: string[] = [];
 
-    const fetchImpl = (async (input: string | Request | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      fetchCalls.push(url);
-      if (url.includes("/api/query")) {
-        return new Response(apiXml, { status: 200 });
-      }
-      if (url.includes("/pdf/2401.12345.pdf")) {
-        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
-      }
-      if (url.includes("/e-print/2401.12345")) {
-        return new Response("\\documentclass{article}\n\\begin{document}\nHello arXiv.\n\\end{document}\n", {
-          status: 200,
-        });
-      }
-      return new Response("unexpected", { status: 404, statusText: "Not Found" });
-    }) as unknown as typeof fetch;
+    const fetchImpl = Object.assign(
+      async (input: string | Request | URL) => {
+        const url = inputUrl(input);
+        fetchCalls.push(url);
+        if (url.includes("/api/query")) {
+          return new Response(apiXml, { status: 200 });
+        }
+        if (url.includes("/pdf/2401.12345.pdf")) {
+          return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
+        }
+        if (url.includes("/e-print/2401.12345")) {
+          return new Response("\\documentclass{article}\n\\begin{document}\nHello arXiv.\n\\end{document}\n", {
+            status: 200,
+          });
+        }
+        return new Response("unexpected", { status: 404, statusText: "Not Found" });
+      },
+      { preconnect: () => {} },
+    );
 
     const runCommand = async (args: string[]) => {
       if (args[0] === "tar") {
@@ -483,7 +467,7 @@ describe("webfetch handler modules", () => {
       if (args[0] === "pandoc") {
         const outputIndex = args.indexOf("--output");
         const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
-        if (outputPath) {
+      if (outputPath !== undefined) {
           const content = args.includes("--to=gfm")
             ? "# Distributionally Robust Receive Combining\n\nHello arXiv.\n"
             : "<html><body><h1>Distributionally Robust Receive Combining</h1></body></html>\n";
@@ -577,19 +561,22 @@ describe("webfetch handler modules", () => {
   </entry>
 </feed>`;
 
-    const fetchImpl = (async (input: string | Request | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/api/query")) {
-        return new Response(apiXml, { status: 200 });
-      }
-      if (url.includes("/pdf/2401.12345.pdf")) {
-        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
-      }
-      if (url.includes("/e-print/2401.12345")) {
-        return new Response(new Uint8Array([0x1f, 0x8b]), { status: 200 });
-      }
-      return new Response("unexpected", { status: 404, statusText: "Not Found" });
-    }) as unknown as typeof fetch;
+    const fetchImpl = Object.assign(
+      async (input: string | Request | URL) => {
+        const url = inputUrl(input);
+        if (url.includes("/api/query")) {
+          return new Response(apiXml, { status: 200 });
+        }
+        if (url.includes("/pdf/2401.12345.pdf")) {
+          return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
+        }
+        if (url.includes("/e-print/2401.12345")) {
+          return new Response(new Uint8Array([0x1f, 0x8b]), { status: 200 });
+        }
+        return new Response("unexpected", { status: 404, statusText: "Not Found" });
+      },
+      { preconnect: () => {} },
+    );
 
     const runCommand = async (args: string[]) => {
       if (args[0] === "tar" && args[1] === "-tzf") {
@@ -599,15 +586,19 @@ describe("webfetch handler modules", () => {
     };
 
     try {
-      await expect(
-        fetchArxivLibraryContent({
+      let rejectionMessage = "";
+      try {
+        await fetchArxivLibraryContent({
           url: new URL("https://arxiv.org/abs/2401.12345"),
           libraryDir,
           fetchImpl,
           runCommand,
           now: new Date("2026-03-09T00:00:00Z"),
-        }),
-      ).rejects.toThrow("unsafe arXiv source archive entry");
+        });
+      } catch (error) {
+        if (error instanceof Error) {rejectionMessage = error.message;}
+      }
+      expect(rejectionMessage).toContain("unsafe arXiv source archive entry");
     } finally {
       rmSync(libraryDir, { recursive: true, force: true });
     }
