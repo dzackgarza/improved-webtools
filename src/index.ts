@@ -59,7 +59,6 @@ type JsonValue =
 
 type WebFetchCacheMode = "default" | "refresh";
 
-const SEARXNG_INSTANCE_URL = (process.env.SEARXNG_INSTANCE_URL ?? "").trim();
 const DEFAULT_TIMEOUT_MS = 15_000;
 const WEBFETCH_COMMAND_TIMEOUT_MS = 30_000;
 const WEBFETCH_WIKIPEDIA_CONVERT_TIMEOUT_MS = 120_000;
@@ -68,15 +67,6 @@ const MAX_LIMIT = 20;
 const MAX_OFFSET = 200;
 const MAX_PAGE_FETCHES = 20;
 const WEBFETCH_INLINE_TOKEN_LIMIT = 20_000;
-const WEBFETCH_CACHE_ENABLED = (process.env.WEBFETCH_CACHE_ENABLED ?? "1").trim() !== "0";
-const WEBFETCH_CACHE_DIR = (
-  process.env.WEBFETCH_CACHE_DIR ?? `${process.env.HOME ?? "/tmp"}/.cache/opencode-webfetch`
-).trim();
-const WEBFETCH_CACHE_TTL_DAYS = Number.parseInt(process.env.WEBFETCH_CACHE_TTL_DAYS ?? "90", 10);
-const WEBFETCH_CACHE_TTL_MS =
-  Number.isFinite(WEBFETCH_CACHE_TTL_DAYS) && WEBFETCH_CACHE_TTL_DAYS > 0
-    ? WEBFETCH_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
-    : 90 * 24 * 60 * 60 * 1000;
 const TOKEN_ENCODER = getEncoding("o200k_base");
 const ISSUE_REPORTING_HINT =
   "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.";
@@ -125,6 +115,28 @@ const NARROWING_CATEGORIES = [
 ] as const;
 
 const VALID_CATEGORIES = new Set<string>(NARROWING_CATEGORIES);
+
+function searxngInstanceUrl(): string {
+  return (process.env.SEARXNG_INSTANCE_URL ?? "").trim();
+}
+
+function webFetchCacheEnabled(): boolean {
+  return (process.env.WEBFETCH_CACHE_ENABLED ?? "1").trim() !== "0";
+}
+
+function webFetchCacheDir(): string {
+  return (
+    process.env.WEBFETCH_CACHE_DIR ?? `${process.env.HOME ?? "/tmp"}/.cache/opencode-webfetch`
+  ).trim();
+}
+
+function webFetchCacheTtlMs(): number {
+  const ttlDays = Number.parseInt(process.env.WEBFETCH_CACHE_TTL_DAYS ?? "90", 10);
+  return Number.isFinite(ttlDays) && ttlDays > 0
+    ? ttlDays * 24 * 60 * 60 * 1000
+    : 90 * 24 * 60 * 60 * 1000;
+}
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
 }
@@ -181,14 +193,14 @@ type HttpMetadata = {
 
 function webFetchCachePath(url: string): string {
   const digest = createHash("sha256").update(url).digest("hex");
-  return `${WEBFETCH_CACHE_DIR}/${digest}.json`;
+  return `${webFetchCacheDir()}/${digest}.json`;
 }
 
 async function readWebFetchCache(
   url: string,
   overwriteCache: WebFetchCacheMode,
 ): Promise<WebFetchHandlerResult | undefined> {
-  if (!WEBFETCH_CACHE_ENABLED) {return undefined;}
+  if (!webFetchCacheEnabled()) {return undefined;}
   if (overwriteCache === "refresh") {return undefined;}
   const path = webFetchCachePath(url);
   const file = Bun.file(path);
@@ -206,7 +218,7 @@ async function readWebFetchCache(
       return undefined;
     }
     const cachedAt = Date.parse(parsed.cachedAt);
-    if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > WEBFETCH_CACHE_TTL_MS) {
+    if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > webFetchCacheTtlMs()) {
       await Bun.$`rm -f ${path}`.quiet();
       return undefined;
     }
@@ -224,11 +236,11 @@ async function writeWebFetchCache(
   url: string,
   result: WebFetchHandlerResult,
 ): Promise<void> {
-  if (!WEBFETCH_CACHE_ENABLED) {return;}
+  if (!webFetchCacheEnabled()) {return;}
   if (result.routeName.includes("/binary")) {return;}
   if (result.routeName.startsWith("arxiv/library")) {return;}
   if (!result.content.trim()) {return;}
-  await Bun.$`mkdir -p ${WEBFETCH_CACHE_DIR}`.quiet();
+  await Bun.$`mkdir -p ${webFetchCacheDir()}`.quiet();
   const payload: WebFetchCachePayload = {
     url,
     routeName: result.routeName,
@@ -625,7 +637,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       domains: tool.schema.array(tool.schema.string()).optional(),
     },
     async execute(args, context) {
-      const baseUrl = SEARXNG_INSTANCE_URL;
+      const baseUrl = searxngInstanceUrl();
       if (!baseUrl) {
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,

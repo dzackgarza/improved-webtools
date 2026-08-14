@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import type { ToolContext } from "@opencode-ai/plugin";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { z } from "zod";
+import { ImprovedWebSearchPlugin } from "../../src/index";
 
 type AskInput = Parameters<ToolContext["ask"]>[0];
 type MetadataInput = Parameters<ToolContext["metadata"]>[0];
@@ -87,17 +88,10 @@ async function loadPlugin(
   } else {
     delete process.env.WEBFETCH_CACHE_TTL_DAYS;
   }
-  const mod = await import(
-    new URL(
-      `../../src/index.ts?ts=${Date.now()}-${Math.random()}`,
-      import.meta.url,
-    ).href
-  );
-
   const client = createOpencodeClient({ baseUrl: "http://localhost" });
   Reflect.set(client.app, "log", async () => {});
 
-  const plugin = await mod.ImprovedWebSearchPlugin({
+  const plugin = await ImprovedWebSearchPlugin({
     client,
     project: {
       id: "test-project",
