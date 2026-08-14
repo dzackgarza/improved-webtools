@@ -6,5 +6,6 @@ __pycache__/
 # Node
 node_modules/
 lcov.info
+.lcov.info.*.tmp
 !.envrc
 .serena/
