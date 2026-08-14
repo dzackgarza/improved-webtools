@@ -8,6 +8,7 @@ import { fetchLiveRedditPost } from "../../scripts/verify-reddit-live";
 
 const TOOL_DIR = process.cwd();
 const pluginUrl = pathToFileURL(join(TOOL_DIR, "src/index.ts")).href;
+const DEBUG_MODE_VARIABLE = "IMPROVED_WEBTOOLS_DEBUG_MODE";
 
 const listedToolSchema = z.object({
   id: z.string(),
@@ -18,9 +19,9 @@ const toolListSchema = z.array(listedToolSchema);
 type ListedTool = z.infer<typeof listedToolSchema>;
 
 async function listTools(debugMode: boolean): Promise<ListedTool[]> {
-  const previousDebugMode = process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;
-  if (debugMode) {process.env.IMPROVED_WEBTOOLS_DEBUG_MODE = "1";}
-  else {delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;}
+  const previousDebugMode = process.env[DEBUG_MODE_VARIABLE];
+  if (debugMode) {process.env[DEBUG_MODE_VARIABLE] = "1";}
+  else {Reflect.deleteProperty(process.env, DEBUG_MODE_VARIABLE);}
 
   const serverPromise = createOpencodeServer({
     hostname: "127.0.0.1",
@@ -31,8 +32,8 @@ async function listTools(debugMode: boolean): Promise<ListedTool[]> {
     },
   });
 
-  if (previousDebugMode === undefined) {delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;}
-  else {process.env.IMPROVED_WEBTOOLS_DEBUG_MODE = previousDebugMode;}
+  if (previousDebugMode === undefined) {Reflect.deleteProperty(process.env, DEBUG_MODE_VARIABLE);}
+  else {process.env[DEBUG_MODE_VARIABLE] = previousDebugMode;}
 
   const server = await serverPromise;
 
