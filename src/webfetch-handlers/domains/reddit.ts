@@ -13,7 +13,7 @@ const redditPostPathSchema = z
   ])
   .rest(z.string());
 
-const pullPushPostSchema = z.object({
+const arcticShiftPostSchema = z.object({
   id: z.string(),
   author: z.string(),
   subreddit: z.string(),
@@ -23,7 +23,7 @@ const pullPushPostSchema = z.object({
   permalink: z.string(),
 });
 
-const pullPushCommentBaseSchema = z.object({
+const arcticShiftCommentSchema = z.object({
   id: z.string(),
   author: z.string(),
   parent_id: z.string(),
@@ -33,21 +33,11 @@ const pullPushCommentBaseSchema = z.object({
   created_utc: z.number(),
 });
 
-const pullPushCommentSchema = z.union([
-  pullPushCommentBaseSchema
-    .extend({ retrieved_on: z.number() })
-    .transform(({ retrieved_on, ...comment }) => ({ ...comment, snapshotTime: retrieved_on })),
-  pullPushCommentBaseSchema.transform((comment) => ({
-    ...comment,
-    snapshotTime: comment.created_utc,
-  })),
-]);
-
-const pullPushPostResponseSchema = z.object({ data: z.tuple([pullPushPostSchema]) });
-const pullPushCommentResponseSchema = z.object({ data: z.array(pullPushCommentSchema) });
+const arcticShiftPostResponseSchema = z.object({ data: z.tuple([arcticShiftPostSchema]) });
+const arcticShiftCommentResponseSchema = z.object({ data: z.array(arcticShiftCommentSchema) });
 const redditParentSchema = z.tuple([z.enum(["t1", "t3"]), z.string().min(1)]);
 
-type PullPushComment = z.infer<typeof pullPushCommentSchema>;
+type ArcticShiftComment = z.infer<typeof arcticShiftCommentSchema>;
 // Exhaustiveness pattern from the TypeScript Handbook:
 // https://www.typescriptlang.org/docs/handbook/unions-and-intersections.html#union-exhaustiveness-checking
 function assertNever(value: never): never {
@@ -69,33 +59,9 @@ function redditText(value: string): string {
   return value.replace(/\r\n?/g, "\n").trim();
 }
 
-function selectLatestCommentSnapshots(comments: PullPushComment[]): PullPushComment[] {
-  const latestById = new Map<string, PullPushComment>();
-
-  for (const comment of comments) {
-    const id = normalizeRedditId(comment.id);
-    const current = latestById.get(id);
-    if (current === undefined) {
-      latestById.set(id, comment);
-      continue;
-    }
-
-    assert.equal(comment.parent_id, current.parent_id);
-    assert.equal(comment.link_id, current.link_id);
-    const currentTime = current.snapshotTime;
-    const nextTime = comment.snapshotTime;
-    assert.notEqual(nextTime, currentTime, `Reddit comment ${id} has ambiguous snapshots.`);
-    if (nextTime > currentTime) {
-      latestById.set(id, comment);
-    }
-  }
-
-  return [...latestById.values()];
-}
-
 function parentKey(
-  comment: PullPushComment,
-  commentsById: ReadonlyMap<string, PullPushComment>,
+  comment: ArcticShiftComment,
+  commentsById: ReadonlyMap<string, ArcticShiftComment>,
   rootPostId: string,
 ): string {
   const [kind, id] = redditParentSchema.parse(comment.parent_id.split("_"));
@@ -116,14 +82,14 @@ function parentKey(
   }
 }
 
-function renderRedditCommentTree(comments: PullPushComment[], postId: string): string[] {
+function renderRedditCommentTree(comments: ArcticShiftComment[], postId: string): string[] {
   const rootPostId = postId.toLowerCase();
   const commentsById = new Map(
     comments.map((comment) => [normalizeRedditId(comment.id), comment] as const),
   );
   assert.equal(commentsById.size, comments.length, "Reddit comment IDs must be unique.");
 
-  const children = new Map<string, PullPushComment[]>();
+  const children = new Map<string, ArcticShiftComment[]>();
   for (const comment of comments) {
     const key = parentKey(comment, commentsById, rootPostId);
     const siblings = children.get(key);
@@ -134,7 +100,7 @@ function renderRedditCommentTree(comments: PullPushComment[], postId: string): s
     siblings.push(comment);
   }
 
-  const sortByScoreThenTime = (left: PullPushComment, right: PullPushComment) => {
+  const sortByScoreThenTime = (left: ArcticShiftComment, right: ArcticShiftComment) => {
     const scoreOrder = right.score - left.score;
     return scoreOrder === 0 ? left.created_utc - right.created_utc : scoreOrder;
   };
@@ -173,22 +139,22 @@ function renderRedditCommentTree(comments: PullPushComment[], postId: string): s
   return lines;
 }
 
-function buildPullPushSubmissionUrl(postId: string): URL {
-  const url = new URL("https://api.pullpush.io/reddit/search/submission/");
+function buildArcticShiftPostUrl(postId: string): URL {
+  const url = new URL("https://arctic-shift.photon-reddit.com/api/posts/ids");
   url.searchParams.set("ids", postId);
-  url.searchParams.set("size", "1");
   return url;
 }
 
-function buildPullPushCommentUrl(postId: string): URL {
-  const url = new URL("https://api.pullpush.io/reddit/search/comment/");
+function buildArcticShiftCommentUrl(postId: string): URL {
+  const url = new URL("https://arctic-shift.photon-reddit.com/api/comments/search");
   url.searchParams.set("link_id", postId);
-  url.searchParams.set("size", "100");
+  url.searchParams.set("limit", "100");
   url.searchParams.set("sort", "asc");
+  url.searchParams.set("fields", "id,author,parent_id,link_id,body,score,created_utc");
   return url;
 }
 
-async function requestPullPush(runCommand: RunCommand, url: URL) {
+async function requestArcticShift(runCommand: RunCommand, url: URL) {
   const result = await runCommand([
     "curl",
     "--fail-with-body",
@@ -202,7 +168,7 @@ async function requestPullPush(runCommand: RunCommand, url: URL) {
   assert.equal(
     result.exitCode,
     0,
-    `PullPush request failed for ${url.pathname}: ${result.stderrText.trim()}`,
+    `Arctic Shift request failed for ${url.pathname}: ${result.stderrText.trim()}`,
   );
   return result.stdoutText;
 }
@@ -213,13 +179,12 @@ export async function fetchRedditPostMarkdown(input: {
 }): Promise<WebFetchHandlerResult> {
   const postId = extractRedditPostId(input.url);
   const [postPayload, commentPayload] = await Promise.all([
-    requestPullPush(input.runCommand, buildPullPushSubmissionUrl(postId)),
-    requestPullPush(input.runCommand, buildPullPushCommentUrl(postId)),
+    requestArcticShift(input.runCommand, buildArcticShiftPostUrl(postId)),
+    requestArcticShift(input.runCommand, buildArcticShiftCommentUrl(postId)),
   ]);
 
-  const post = pullPushPostResponseSchema.parse(JSON.parse(postPayload)).data[0];
-  const commentSnapshots = pullPushCommentResponseSchema.parse(JSON.parse(commentPayload)).data;
-  const comments = selectLatestCommentSnapshots(commentSnapshots);
+  const post = arcticShiftPostResponseSchema.parse(JSON.parse(postPayload)).data[0];
+  const comments = arcticShiftCommentResponseSchema.parse(JSON.parse(commentPayload)).data;
   assert.equal(normalizeRedditId(post.id), postId);
   for (const comment of comments) {
     assert.equal(normalizeRedditId(comment.link_id), postId);

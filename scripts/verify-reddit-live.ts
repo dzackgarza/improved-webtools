@@ -56,7 +56,7 @@ async function main() {
   }
 
   console.log("PASS: Reddit live verification succeeded.");
-  console.log("PASS: PullPush returned the expected post metadata.");
+  console.log("PASS: Arctic Shift returned the expected post metadata.");
   console.log("PASS: Nested comments were rendered from the live API response.");
 }
 

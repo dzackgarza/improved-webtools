@@ -118,7 +118,7 @@ Supports pagination via `offset` and `num_results`. In debug mode the same behav
 
 - **Commands**: `gh`, `w3m`, `curl`
 
-- **Handlers**: `yt-dlp`, `uvx`, PullPush API (for Reddit)
+- **Handlers**: `yt-dlp`, `uvx`, Arctic Shift API (for Reddit)
 
 - **MCP**: Python 3.11+, `uv`, `fastmcp`
 
@@ -134,7 +134,7 @@ just reddit-live-verify
 YTDLP_COOKIES_FILE=/abs/path/to/youtube.cookies just youtube-live-verify
 ```
 
-`just reddit-live-verify` runs the live Reddit handler against the configured Apify actor and proves the nested-comment render path without making the default Bun suite depend on live Apify access.
+`just reddit-live-verify` runs the live Reddit handler against Arctic Shift and proves the nested-comment render path.
 
 `just youtube-live-verify` preflights `uvx`, `yt-dlp` via `uvx`, and `openai-whisper` via `uvx` before running a caption-backed TED proof, a no-subtitles Whisper proof, and an invalid-video failure check.
 On CPU-only hosts, the Whisper leg can take several minutes; set `YOUTUBE_VERIFY_TIMEOUT_MS` higher if it times out before transcription completes.
