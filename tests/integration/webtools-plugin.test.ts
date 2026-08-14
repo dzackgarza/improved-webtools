@@ -3,11 +3,13 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { z } from "zod";
 import { PASSPHRASE_WEBFETCH, PASSPHRASE_WEB_SEARCH } from "../../src/passphrases";
 
-const OPENCODE = process.env.OPENCODE_BIN || "opencode";
+const OPENCODE = "opencode";
 const TOOL_DIR = process.cwd();
 const MAX_BUFFER = 8 * 1024 * 1024;
+const OPENCODE_TEST_MODEL = "openrouter/openrouter/free";
 
 let tempConfigPath: string;
 let tempDebugConfigPath: string;
@@ -17,7 +19,7 @@ beforeAll(() => {
   
   const config = {
     "$schema": "https://opencode.ai/config.json",
-    "model": "github-copilot/gpt-4.1",
+    "model": OPENCODE_TEST_MODEL,
     "plugin": [pluginUrl],
     "permission": {
       "webfetch": "allow",
@@ -41,8 +43,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  if (tempConfigPath) rmSync(tempConfigPath, { force: true });
-  if (tempDebugConfigPath) rmSync(tempDebugConfigPath, { force: true });
+  rmSync(tempConfigPath, { force: true });
+  rmSync(tempDebugConfigPath, { force: true });
 });
 
 type RunOptions = {
@@ -52,22 +54,26 @@ type RunOptions = {
   format?: "default" | "json";
 };
 
-type ToolUseEvent = {
-  type: "tool_use";
-  part: {
-    type: "tool";
-    tool: string;
-    state: {
-      status?: string;
-      input?: unknown;
-      output?: string;
-    };
-  };
-};
+const jsonEventSchema = z.object({ type: z.string() }).loose();
+const completedToolUseSchema = z
+  .object({
+    type: z.literal("tool_use"),
+    part: z
+      .object({
+        type: z.literal("tool"),
+        tool: z.string(),
+        state: z.object({ status: z.literal("completed"), output: z.string() }).loose(),
+      })
+      .loose(),
+  })
+  .loose();
+
+type JsonEvent = z.infer<typeof jsonEventSchema>;
+type CompletedToolUseEvent = z.infer<typeof completedToolUseSchema>;
 
 function run(prompt: string, options: RunOptions = {}) {
-  const args = ["run", "--agent", "Minimal"];
-  if (options.format === "json") args.push("--format", "json");
+  const args = ["run", "--agent", "build"];
+  if (options.format === "json") {args.push("--format", "json");}
   args.push(prompt);
 
   const result = spawnSync(OPENCODE, args, {
@@ -81,50 +87,28 @@ function run(prompt: string, options: RunOptions = {}) {
       ...options.env,
     },
   });
-  if (result.error) throw result.error;
+  if (result.error !== undefined) {throw result.error;}
   return (result.stdout ?? "") + (result.stderr ?? "");
 }
 
-function parseJsonEvents(output: string): unknown[] {
+function parseJsonEvents(output: string): JsonEvent[] {
   return output
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
-    });
+    .filter((line) => line.length > 0)
+    .map((line) => jsonEventSchema.parse(JSON.parse(line)));
 }
 
 function runJson(prompt: string, options: RunOptions = {}) {
   return parseJsonEvents(run(prompt, { ...options, format: "json" }));
 }
 
-function findCompletedToolUse(events: unknown[], toolName: string): ToolUseEvent {
-  const match = events.find(
-    (event): event is ToolUseEvent =>
-      typeof event === "object" &&
-      event !== null &&
-      "type" in event &&
-      event.type === "tool_use" &&
-      "part" in event &&
-      typeof event.part === "object" &&
-      event.part !== null &&
-      "type" in event.part &&
-      event.part.type === "tool" &&
-      "tool" in event.part &&
-      event.part.tool === toolName &&
-      "state" in event.part &&
-      typeof event.part.state === "object" &&
-      event.part.state !== null &&
-      "status" in event.part.state &&
-      event.part.state.status === "completed",
-  );
-  expect(match).toBeDefined();
-  return match!;
+function findCompletedToolUse(events: JsonEvent[], toolName: string): CompletedToolUseEvent {
+  for (const event of events) {
+    const result = completedToolUseSchema.safeParse(event);
+    if (result.success && result.data.part.tool === toolName) {return result.data;}
+  }
+  throw new Error(`OpenCode did not complete the required ${toolName} call.`);
 }
 
 describe("improved-webtools live e2e", () => {
