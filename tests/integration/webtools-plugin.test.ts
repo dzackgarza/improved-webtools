@@ -19,8 +19,8 @@ type ListedTool = z.infer<typeof listedToolSchema>;
 
 async function listTools(debugMode: boolean): Promise<ListedTool[]> {
   const previousDebugMode = process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;
-  if (debugMode) process.env.IMPROVED_WEBTOOLS_DEBUG_MODE = "1";
-  else delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;
+  if (debugMode) {process.env.IMPROVED_WEBTOOLS_DEBUG_MODE = "1";}
+  else {delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;}
 
   const serverPromise = createOpencodeServer({
     hostname: "127.0.0.1",
@@ -31,8 +31,8 @@ async function listTools(debugMode: boolean): Promise<ListedTool[]> {
     },
   });
 
-  if (previousDebugMode === undefined) delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;
-  else process.env.IMPROVED_WEBTOOLS_DEBUG_MODE = previousDebugMode;
+  if (previousDebugMode === undefined) {delete process.env.IMPROVED_WEBTOOLS_DEBUG_MODE;}
+  else {process.env.IMPROVED_WEBTOOLS_DEBUG_MODE = previousDebugMode;}
 
   const server = await serverPromise;
 
@@ -54,7 +54,7 @@ function resolvedTool(tools: ListedTool[], id: string): ListedTool {
   // OpenCode resolves duplicate IDs by registry order. The final registration wins.
   // Reference: https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/tools.ts
   const tool = tools.findLast((candidate) => candidate.id === id);
-  if (tool === undefined) throw new Error(`OpenCode did not register ${id}.`);
+  if (tool === undefined) {throw new Error(`OpenCode did not register ${id}.`);}
   return tool;
 }
 
