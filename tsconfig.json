@@ -3,13 +3,12 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "baseUrl": "src",
     "paths": {
-      "@webfetch-handlers": ["webfetch-handlers/index.ts"],
-      "@webfetch-handlers/*": ["webfetch-handlers/*"]
+      "@webfetch-handlers": ["./src/webfetch-handlers/index.ts"],
+      "@webfetch-handlers/*": ["./src/webfetch-handlers/*"]
     },
     "lib": ["ESNext"],
-    "types": ["bun-types"],
+    "types": ["bun"],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
