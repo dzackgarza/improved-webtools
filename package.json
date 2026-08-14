@@ -6,7 +6,8 @@
   },
   "devDependencies": {
     "@opencode-ai/sdk": "1.2.20",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "opencode-ai": "1.18.18"
   },
   "peerDependencies": {
     "typescript": "^5"
