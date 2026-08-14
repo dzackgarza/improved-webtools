@@ -1,7 +1,7 @@
 {
   "name": "@dzackgarza/improved-webtools",
   "scripts": {
-    "test": "bun test --coverage --coverage-reporter=lcov --coverage-dir=.",
+    "test": "opencode --version && bun test --coverage --coverage-reporter=lcov --coverage-dir=.",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

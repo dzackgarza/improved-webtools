@@ -970,6 +970,3 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     },
   };
 };
-
-// Backward-compatible export name while transitioning to improved-* naming.
-export const SearxngSearchPlugin = ImprovedWebSearchPlugin;
