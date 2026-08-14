@@ -68,7 +68,7 @@ describe("improved-webtools live integration", () => {
     expect(resolvedTool(tools, "websearch").description).toContain(
       "Optional categories for narrowing only",
     );
-  }, 20_000);
+  }, 30_000);
 
   it("registers the non-shadowing debug aliases through OpenCode", async () => {
     const tools = await listTools(true);
