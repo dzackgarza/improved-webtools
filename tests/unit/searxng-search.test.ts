@@ -3,31 +3,32 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { ToolContext } from "@opencode-ai/plugin";
+import { createOpencodeClient } from "@opencode-ai/sdk";
+import { z } from "zod";
+import { ImprovedWebSearchPlugin } from "../../src/index";
 
-type AskInput = {
-  permission: string;
-  patterns: string[];
-  always: string[];
-  metadata: Record<string, unknown>;
-};
+type AskInput = Parameters<ToolContext["ask"]>[0];
+type MetadataInput = Parameters<ToolContext["metadata"]>[0];
 
-type MetadataInput = {
-  title?: string;
-  metadata?: Record<string, unknown>;
-};
-
-type MockContext = {
-  sessionID: string;
-  messageID: string;
-  agent: string;
-  directory: string;
-  worktree: string;
-  abort: AbortSignal;
+type MockContext = ToolContext & {
   asks: AskInput[];
   metadatas: MetadataInput[];
-  ask: (input: AskInput) => Promise<void>;
-  metadata: (input: MetadataInput) => void;
 };
+
+const searchPageSchema = z.object({
+  results: z.array(
+    z.object({
+      url: z.string(),
+    }).passthrough(),
+  ),
+}).passthrough();
+
+function inputUrl(input: string | Request | URL): string {
+  if (typeof input === "string") {return input;}
+  if (input instanceof URL) {return input.href;}
+  return input.url;
+}
 
 function buildContext(): MockContext {
   const asks: AskInput[] = [];
@@ -65,8 +66,8 @@ function fixtureText(relativePath: string): string {
   return readFileSync(path, "utf8");
 }
 
-function fixtureJson<T>(relativePath: string): T {
-  return JSON.parse(fixtureText(relativePath)) as T;
+function fixtureJson(relativePath: string): z.infer<ReturnType<typeof z.json>> {
+  return z.json().parse(JSON.parse(fixtureText(relativePath)));
 }
 
 async function loadPlugin(
@@ -82,25 +83,26 @@ async function loadPlugin(
   process.env.WEBFETCH_CACHE_DIR =
     options?.webfetchCacheDir ??
     `/tmp/opencode-webfetch-test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  if (options?.webfetchCacheTtlDays) {
+  if (options?.webfetchCacheTtlDays !== undefined) {
     process.env.WEBFETCH_CACHE_TTL_DAYS = options.webfetchCacheTtlDays;
   } else {
     delete process.env.WEBFETCH_CACHE_TTL_DAYS;
   }
-  const mod = await import(
-    new URL(
-      `../../src/index.ts?ts=${Date.now()}-${Math.random()}`,
-      import.meta.url,
-    ).href
-  );
+  const client = createOpencodeClient({ baseUrl: "http://localhost" });
+  Reflect.set(client.app, "log", async () => {});
 
-  const client = {
-    app: {
-      log: async () => {},
+  const plugin = await ImprovedWebSearchPlugin({
+    client,
+    project: {
+      id: "test-project",
+      worktree: "/tmp",
+      time: { created: 0 },
     },
-  };
-
-  const plugin = await mod.ImprovedWebSearchPlugin({ client } as any);
+    directory: "/tmp",
+    worktree: "/tmp",
+    serverUrl: new URL("http://localhost"),
+    $: Bun.$,
+  });
   return {
     websearch: plugin.tool!.websearch,
     webfetch: plugin.tool!.webfetch,
@@ -119,40 +121,40 @@ describe("searxng-search plugin", () => {
 
   beforeEach(() => {
     globalThis.fetch = originalFetch;
-    (Bun as any).spawn = originalSpawn;
-    (Bun as any).write = originalWrite;
+    Reflect.set(Bun, "spawn", originalSpawn);
+    Reflect.set(Bun, "write", originalWrite);
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    (Bun as any).spawn = originalSpawn;
-    (Bun as any).write = originalWrite;
+    Reflect.set(Bun, "spawn", originalSpawn);
+    Reflect.set(Bun, "write", originalWrite);
     if (originalSearxngUrl === undefined)
-      delete process.env.SEARXNG_INSTANCE_URL;
-    else process.env.SEARXNG_INSTANCE_URL = originalSearxngUrl;
+      {delete process.env.SEARXNG_INSTANCE_URL;}
+    else {process.env.SEARXNG_INSTANCE_URL = originalSearxngUrl;}
     if (originalCacheEnabled === undefined)
-      delete process.env.WEBFETCH_CACHE_ENABLED;
-    else process.env.WEBFETCH_CACHE_ENABLED = originalCacheEnabled;
-    if (originalCacheDir === undefined) delete process.env.WEBFETCH_CACHE_DIR;
-    else process.env.WEBFETCH_CACHE_DIR = originalCacheDir;
+      {delete process.env.WEBFETCH_CACHE_ENABLED;}
+    else {process.env.WEBFETCH_CACHE_ENABLED = originalCacheEnabled;}
+    if (originalCacheDir === undefined) {delete process.env.WEBFETCH_CACHE_DIR;}
+    else {process.env.WEBFETCH_CACHE_DIR = originalCacheDir;}
     if (originalCacheTtlDays === undefined)
-      delete process.env.WEBFETCH_CACHE_TTL_DAYS;
-    else process.env.WEBFETCH_CACHE_TTL_DAYS = originalCacheTtlDays;
+      {delete process.env.WEBFETCH_CACHE_TTL_DAYS;}
+    else {process.env.WEBFETCH_CACHE_TTL_DAYS = originalCacheTtlDays;}
     if (originalArxivLibraryDir === undefined)
-      delete process.env.WEBFETCH_ARXIV_LIBRARY_DIR;
-    else process.env.WEBFETCH_ARXIV_LIBRARY_DIR = originalArxivLibraryDir;
+      {delete process.env.WEBFETCH_ARXIV_LIBRARY_DIR;}
+    else {process.env.WEBFETCH_ARXIV_LIBRARY_DIR = originalArxivLibraryDir;}
   });
 
   it("formats websearch results with pagination", async () => {
-    const pageOpenAI1 = fixtureJson<{
-      results: Array<Record<string, unknown>>;
-    }>("searxng/openai-page1.json");
-    const pageOpenAI2 = fixtureJson<{
-      results: Array<Record<string, unknown>>;
-    }>("searxng/openai-page2.json");
-    const responses = new Map<string, unknown>([
-      ["openai|1", pageOpenAI1 as unknown],
-      ["openai|2", pageOpenAI2 as unknown],
+    const pageOpenAI1 = searchPageSchema.parse(
+      fixtureJson("searxng/openai-page1.json"),
+    );
+    const pageOpenAI2 = searchPageSchema.parse(
+      fixtureJson("searxng/openai-page2.json"),
+    );
+    const responses = new Map<string, z.infer<typeof searchPageSchema>>([
+      ["openai|1", pageOpenAI1],
+      ["openai|2", pageOpenAI2],
     ]);
 
     const openAiExpectedWindow = [
@@ -160,13 +162,13 @@ describe("searxng-search plugin", () => {
       ...pageOpenAI2.results,
     ].slice(1, 3);
 
-    (globalThis as any).fetch = async (input: string | Request | URL) => {
-      const url = new URL(String(input));
+    Reflect.set(globalThis, "fetch", async (input: string | Request | URL) => {
+      const url = new URL(inputUrl(input));
       const q = url.searchParams.get("q") ?? "";
       const page = Number(url.searchParams.get("pageno") ?? "1");
       const key = `${q}|${page}`;
       const body = responses.get(key);
-      if (!body) {
+      if (body === undefined) {
         return new Response(
           JSON.stringify({ error: `unexpected key ${key}` }),
           { status: 500 },
@@ -176,7 +178,7 @@ describe("searxng-search plugin", () => {
         status: 200,
         headers: { "content-type": "application/json" },
       });
-    };
+    });
 
     const { websearch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -187,7 +189,7 @@ describe("searxng-search plugin", () => {
         num_results: 2,
         offset: 1,
       },
-      context as any,
+      context,
     );
 
     expect(context.asks).toHaveLength(1);
@@ -212,12 +214,12 @@ describe("searxng-search plugin", () => {
       "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
     );
     expect(output).toContain("Showing results: 2-3 of 0");
-    expect(output).toContain(String(openAiExpectedWindow[0]?.url ?? ""));
-    expect(output).toContain(String(openAiExpectedWindow[1]?.url ?? ""));
+    expect(output).toContain(openAiExpectedWindow[0]?.url ?? "");
+    expect(output).toContain(openAiExpectedWindow[1]?.url ?? "");
   });
 
   it("returns validation errors for invalid category and offset", async () => {
-    (globalThis as any).fetch = async () =>
+    Reflect.set(globalThis, "fetch", async () =>
       new Response(
         JSON.stringify({
           query: "unused",
@@ -228,7 +230,7 @@ describe("searxng-search plugin", () => {
           unresponsive_engines: [],
         }),
         { status: 200, headers: { "content-type": "application/json" } },
-      );
+      ));
 
     const { websearch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -238,7 +240,7 @@ describe("searxng-search plugin", () => {
         query: "unused",
         category: "invalid_category",
       },
-      context as any,
+      context,
     );
 
     expect(output).toContain(
@@ -255,15 +257,15 @@ describe("searxng-search plugin", () => {
     const largePrefix = largeText.slice(0, 600).trim();
     const writes: Array<{ path: string; content: string }> = [];
 
-    (Bun as any).spawn = () => ({
+    Reflect.set(Bun, "spawn", () => ({
       stdout: streamFromText(largeText),
       stderr: streamFromText(""),
       exited: Promise.resolve(0),
-    });
+    }));
 
-    (Bun as any).write = async (path: string, content: string) => {
+    Reflect.set(Bun, "write", async (path: string, content: string) => {
       writes.push({ path: String(path), content: String(content) });
-    };
+    });
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -272,7 +274,7 @@ describe("searxng-search plugin", () => {
       {
         url: "https://example.com/big",
       },
-      context as any,
+      context,
     );
 
     expect(context.asks).toHaveLength(1);
@@ -318,7 +320,7 @@ describe("searxng-search plugin", () => {
   it("downloads PDFs to a temp file instead of piping raw bytes through w3m", async () => {
     const calls: string[][] = [];
 
-    (Bun as any).spawn = (args: string[]) => {
+    Reflect.set(Bun, "spawn", (args: string[]) => {
       calls.push(args);
       const script = args[2] ?? "";
 
@@ -350,7 +352,7 @@ describe("searxng-search plugin", () => {
         stderr: streamFromText(`unexpected command: ${script}`),
         exited: Promise.resolve(1),
       };
-    };
+    });
 
     const { webfetch } = await loadPlugin("http://localhost/searxng", {
       webfetchCacheEnabled: "0",
@@ -361,7 +363,7 @@ describe("searxng-search plugin", () => {
       {
         url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
       },
-      context as any,
+      context,
     );
 
     expect(calls).toHaveLength(2);
@@ -378,51 +380,11 @@ describe("searxng-search plugin", () => {
     expect(output).toContain("Content-Length: 13264 bytes");
   });
 
-  it("routes reddit posts through apify and renders nested markdown comments", async () => {
-    const apifyDataset = fixtureJson<Array<Record<string, unknown>>>(
-      "reddit/apify-search-openai.json",
-    );
-
-    (Bun as any).spawn = (args: string[]) => {
-      if (args[0] === "apify" && args[1] === "call") {
-        return {
-          stdout: streamFromText(JSON.stringify(apifyDataset)),
-          stderr: streamFromText(""),
-          exited: Promise.resolve(0),
-        };
-      }
-      return {
-        stdout: streamFromText(""),
-        stderr: streamFromText("unexpected command"),
-        exited: Promise.resolve(1),
-      };
-    };
-
-    const { webfetch } = await loadPlugin("http://localhost/searxng");
-    const context = buildContext();
-
-    const output = await webfetch.execute(
-      {
-        url: "https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/",
-      },
-      context as any,
-    );
-
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
-    expect(output).toContain("Route: reddit");
-    expect(output).toContain("# Reddit Post");
-    expect(output).toContain("## Comments (nested)");
-    expect(output).toContain("- u/The_GSingh (score 20):");
-    expect(output).toContain("When is it even coming out");
-  });
-
   it("routes youtube URLs through transcript extraction pipeline", async () => {
     const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
     const vtt = fixtureText("youtube/dQw4w9WgXcQ.en.vtt");
 
-    (Bun as any).spawn = (args: string[]) => {
+    Reflect.set(Bun, "spawn", (args: string[]) => {
       if (
         args[0] === "uvx" &&
         args.includes("yt-dlp") &&
@@ -442,7 +404,7 @@ describe("searxng-search plugin", () => {
       ) {
         const outputIndex = args.indexOf("-o");
         const template = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
-        if (template) {
+        if (template !== undefined) {
           const dir = dirname(template);
           mkdirSync(dir, { recursive: true });
           writeFileSync(join(dir, "dQw4w9WgXcQ.en.vtt"), vtt);
@@ -459,7 +421,7 @@ describe("searxng-search plugin", () => {
       }
 
       return { exited: Promise.resolve(1) };
-    };
+    });
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -468,7 +430,7 @@ describe("searxng-search plugin", () => {
       {
         url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       },
-      context as any,
+      context,
     );
 
     expect(output).toContain(
@@ -480,24 +442,22 @@ describe("searxng-search plugin", () => {
   });
 
   it("routes wikipedia URLs through parse API and markdown conversion", async () => {
-    const parseFixture = fixtureJson<Record<string, unknown>>(
-      "wikipedia/parse-fourier-transform.json",
-    );
+    const parseFixture = fixtureJson("wikipedia/parse-fourier-transform.json");
     const converted = fixtureText("wikipedia/fourier-transform.converted.md");
     const convertedShort = converted.split("\n").slice(0, 120).join("\n");
 
-    (globalThis as any).fetch = async () => {
+    Reflect.set(globalThis, "fetch", async () => {
       return new Response(JSON.stringify(parseFixture), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
-    };
+    });
 
-    (Bun as any).spawn = () => ({
+    Reflect.set(Bun, "spawn", () => ({
       stdout: streamFromText(convertedShort),
       stderr: streamFromText(""),
       exited: Promise.resolve(0),
-    });
+    }));
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -506,7 +466,7 @@ describe("searxng-search plugin", () => {
       {
         url: "https://en.wikipedia.org/wiki/Fourier_transform",
       },
-      context as any,
+      context,
     );
 
     expect(output).toContain(
@@ -522,14 +482,14 @@ describe("searxng-search plugin", () => {
     const calls: string[][] = [];
 
     try {
-      (Bun as any).spawn = (args: string[]) => {
+      Reflect.set(Bun, "spawn", (args: string[]) => {
         calls.push(args);
         return {
           stdout: streamFromText("cached page content"),
           stderr: streamFromText(""),
           exited: Promise.resolve(0),
         };
-      };
+      });
 
       const { webfetch } = await loadPlugin("http://localhost/searxng", {
         webfetchCacheEnabled: "1",
@@ -542,13 +502,13 @@ describe("searxng-search plugin", () => {
         {
           url: "https://example.com/cache-me",
         },
-        context as any,
+        context,
       );
       const second = await webfetch.execute(
         {
           url: "https://example.com/cache-me",
         },
-        context as any,
+        context,
       );
 
       expect(calls).toHaveLength(2);
@@ -567,7 +527,7 @@ describe("searxng-search plugin", () => {
     const calls: string[][] = [];
 
     try {
-      (Bun as any).spawn = (args: string[]) => {
+      Reflect.set(Bun, "spawn", (args: string[]) => {
         calls.push(args);
         const command = args[2] ?? "";
         if (command.includes("curl -sSIL")) {
@@ -584,7 +544,7 @@ describe("searxng-search plugin", () => {
           stderr: streamFromText(""),
           exited: Promise.resolve(0),
         };
-      };
+      });
 
       const { webfetch } = await loadPlugin("http://localhost/searxng", {
         webfetchCacheEnabled: "1",
@@ -597,7 +557,7 @@ describe("searxng-search plugin", () => {
         {
           url: "https://example.com/cache-refresh",
         },
-        context as any,
+        context,
       );
       expect(calls).toHaveLength(2);
       const refreshed = await webfetch.execute(
@@ -605,7 +565,7 @@ describe("searxng-search plugin", () => {
           url: "https://example.com/cache-refresh",
           overwrite_cache: true,
         },
-        context as any,
+        context,
       );
       expect(calls).toHaveLength(4);
       expect(first).toContain("Route: default");
@@ -637,8 +597,8 @@ describe("searxng-search plugin", () => {
     );
 
     try {
-      (globalThis as any).fetch = async (input: string | Request | URL) => {
-        if (String(input).includes("/api/query")) {
+      Reflect.set(globalThis, "fetch", async (input: string | Request | URL) => {
+        if (inputUrl(input).includes("/api/query")) {
           return new Response(`<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
   <entry>
@@ -653,18 +613,18 @@ describe("searxng-search plugin", () => {
 </feed>`, { status: 200 });
         }
         return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
-      };
+      });
 
-      (Bun as any).spawn = (args: string[]) => {
+      Reflect.set(Bun, "spawn", (args: string[]) => {
         if (args[0] === "pandoc") {
           const outputIndex = args.indexOf("--output");
           const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
-          if (outputPath) {
+          if (outputPath !== undefined) {
             writeFileSync(outputPath, args.includes("--to=gfm") ? "# arxiv markdown\n" : "<html></html>\n");
           }
         }
         return { exited: Promise.resolve(0), stdout: streamFromText(""), stderr: streamFromText("") };
-      };
+      });
 
       const { webfetch } = await loadPlugin("http://localhost/searxng", {
         webfetchCacheEnabled: "1",
@@ -676,7 +636,7 @@ describe("searxng-search plugin", () => {
         {
           url: arxivUrl,
         },
-        context as any,
+        context,
       );
 
       expect(output).toContain("Route: arxiv/library");
@@ -690,11 +650,11 @@ describe("searxng-search plugin", () => {
   it("routes github URLs through gh handler commands", async () => {
     const issueFixture = fixtureText("github/issue-14460.json");
 
-    (Bun as any).spawn = () => ({
+    Reflect.set(Bun, "spawn", () => ({
       stdout: streamFromText(issueFixture),
       stderr: streamFromText(""),
       exited: Promise.resolve(0),
-    });
+    }));
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -703,7 +663,7 @@ describe("searxng-search plugin", () => {
       {
         url: "https://github.com/anomalyco/opencode/issues/8094",
       },
-      context as any,
+      context,
     );
 
     expect(output).toContain("Route: github");
@@ -711,7 +671,7 @@ describe("searxng-search plugin", () => {
   });
 
   it("explains arxiv 429 as capacity-related", async () => {
-    (Bun as any).spawn = (args: string[]) => {
+    Reflect.set(Bun, "spawn", (args: string[]) => {
       const script = args[2] ?? "";
       if (script.includes("curl -sSIL")) {
         return {
@@ -725,7 +685,7 @@ describe("searxng-search plugin", () => {
         stderr: streamFromText(""),
         exited: Promise.resolve(0),
       };
-    };
+    });
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -734,7 +694,7 @@ describe("searxng-search plugin", () => {
       {
         url: "https://export.arxiv.org/api/query?search_query=all:electron",
       },
-      context as any,
+      context,
     );
 
     expect(output).toContain("arXiv API case: `429 Rate exceeded`.");
@@ -742,7 +702,7 @@ describe("searxng-search plugin", () => {
   });
 
   it("explains arxiv 503 as excessive-use signal", async () => {
-    (Bun as any).spawn = (args: string[]) => {
+    Reflect.set(Bun, "spawn", (args: string[]) => {
       const script = args[2] ?? "";
       if (script.includes("curl -sSIL")) {
         return {
@@ -752,7 +712,7 @@ describe("searxng-search plugin", () => {
         };
       }
       return { exited: Promise.resolve(0), stdout: streamFromText(""), stderr: streamFromText("") };
-    };
+    });
 
     const { webfetch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -761,7 +721,7 @@ describe("searxng-search plugin", () => {
       {
         url: "https://export.arxiv.org/api/query?search_query=all:quantum",
       },
-      context as any,
+      context,
     );
 
     expect(output).toContain("arXiv API case: `503 Service Unavailable`.");

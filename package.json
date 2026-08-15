@@ -1,18 +1,23 @@
 {
   "name": "@dzackgarza/improved-webtools",
   "scripts": {
-    "test": "bun test",
+    "test": "opencode --version && bun test --coverage --coverage-reporter=lcov --coverage-dir=. && bun run test:debug",
+    "test:debug": "IMPROVED_WEBTOOLS_DEBUG_MODE=1 bun test ./tests/integration/webtools-plugin-debug.verify.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@opencode-ai/sdk": "1.2.20",
+    "@types/bun": "latest",
+    "get-port": "7.2.0",
+    "opencode-ai": "1.18.18"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.20",
-    "js-tiktoken": "^1.0.21"
+    "js-tiktoken": "^1.0.21",
+    "zod": "^4.4.3"
   },
   "module": "./src/index.ts",
   "version": "0.1.0",

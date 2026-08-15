@@ -22,6 +22,7 @@ export type WebFetchHandlerResult = {
 export type WebFetchDomainHandler = {
   name: string;
   domains: readonly string[];
+  supports?: (url: URL) => boolean;
   handle: (input: WebFetchHandlerInput) => Promise<WebFetchHandlerResult>;
 };
 

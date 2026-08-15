@@ -1,27 +1,5 @@
 import { fetchRedditPostMarkdown } from "../src/webfetch-handlers/domains/reddit";
 
-async function runCommand(args: string[], timeoutMs = 180_000) {
-  const proc = Bun.spawn(args, {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const timeout = setTimeout(() => {
-    proc.kill();
-  }, timeoutMs);
-
-  try {
-    const [stdoutText, stderrText, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { stdoutText, stderrText, exitCode };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function assertContains(text: string, expected: string, label: string) {
   if (!text.includes(expected)) {
     throw new Error(`${label} missing expected text: ${expected}`);
@@ -34,35 +12,29 @@ function assertMatches(text: string, pattern: RegExp, label: string) {
   }
 }
 
-async function main() {
-  const actor = (process.env.REDDIT_APIFY_ACTOR ?? "spry_wholemeal/reddit-scraper").trim();
-  if (!actor) {
-    throw new Error("REDDIT_APIFY_ACTOR must be non-empty when set.");
-  }
-
+export async function fetchLiveRedditPost(): Promise<string> {
   const result = await fetchRedditPostMarkdown({
     url: new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/"),
-    runCommand,
-    fetchFallbackWithW3M: async () => ({
-      stdoutText: "",
-      stderrText: "fallback should not run for a Reddit post permalink",
-      exitCode: 1,
-    }),
-    apifyActor: actor,
+    fetchImpl: fetch,
   });
 
-  assertContains(result.content, "# Reddit Post", "reddit success case");
-  assertContains(result.content, "Anyone Else Excited for o3 Mini Release?", "reddit success case");
-  assertContains(result.content, "- Subreddit: r/OpenAI", "reddit success case");
-  assertContains(result.content, "## Comments (nested)", "reddit success case");
-  assertMatches(result.content, /^- Comments extracted: [1-9][0-9]*$/m, "reddit success case");
-  if (result.content.includes("[no comments extracted]")) {
+  return result.content;
+}
+
+async function main() {
+  const content = await fetchLiveRedditPost();
+
+  assertContains(content, "# Reddit Post", "reddit success case");
+  assertContains(content, "Anyone Else Excited for o3 Mini Release?", "reddit success case");
+  assertContains(content, "- Subreddit: r/OpenAI", "reddit success case");
+  assertContains(content, "## Comments (nested)", "reddit success case");
+  assertMatches(content, /^- Comments extracted: [1-9][0-9]*$/m, "reddit success case");
+  assertMatches(content, /^  - u\/[^\n]+ \(score -?[0-9]+\):$/m, "reddit nested comment");
+  if (content.includes("[no comments]")) {
     throw new Error("reddit success case unexpectedly returned an empty comment tree");
   }
 
-  console.log("PASS: Reddit live verification succeeded.");
-  console.log("PASS: Real Apify actor output produced the expected post metadata.");
-  console.log("PASS: Nested comments were rendered from the live actor response.");
+  process.stdout.write("Reddit live verification passed.\n");
 }
 
-await main();
+if (import.meta.main) await main();

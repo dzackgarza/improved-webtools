@@ -1,6 +1,8 @@
 import { type Plugin, tool } from "@opencode-ai/plugin";
 import { getEncoding } from "js-tiktoken";
+import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import {
   fetchArxivLibraryContent,
   fetchGitHubContent,
@@ -10,6 +12,7 @@ import {
   isArxivLibraryUrl,
   GITHUB_DOMAINS,
   hostMatchesDomain,
+  isRedditPostPermalink,
   REDDIT_DOMAINS,
   type CommandExecutionResult,
   type WebFetchDomainHandler,
@@ -19,27 +22,45 @@ import {
 } from "./webfetch-handlers/index.ts";
 import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
 
-type SearxngResult = {
-  title: string;
-  url: string;
-  content: string;
-  engine: string;
-  category: string;
-  publishedDate: string | null;
-};
+const searxngResultSchema = z.object({
+  title: z.string(),
+  url: z.string(),
+  content: z.string(),
+  engine: z.string(),
+  category: z.string(),
+  publishedDate: z.string().nullable(),
+});
 
-type SearxngResponse = {
-  query: string;
-  number_of_results: number;
-  results: SearxngResult[];
-  answers: string[];
-  suggestions: string[];
-  unresponsive_engines: Array<[string, string]>;
-};
+const searxngAnswerSchema = z
+  .union([
+    z.string(),
+    z.object({ answer: z.string() }),
+  ])
+  .transform((answer) =>
+    typeof answer === "string" ? answer : answer.answer,
+  );
+
+const searxngResponseSchema = z.object({
+  query: z.string(),
+  number_of_results: z.number().finite(),
+  results: z.array(searxngResultSchema),
+  answers: z.array(searxngAnswerSchema),
+  suggestions: z.array(z.string()),
+  unresponsive_engines: z.array(z.tuple([z.string(), z.string()])),
+});
+
+type SearxngResult = z.infer<typeof searxngResultSchema>;
+type SearxngResponse = z.infer<typeof searxngResponseSchema>;
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 type WebFetchCacheMode = "default" | "refresh";
 
-const SEARXNG_INSTANCE_URL = (process.env.SEARXNG_INSTANCE_URL ?? "").trim();
 const DEFAULT_TIMEOUT_MS = 15_000;
 const WEBFETCH_COMMAND_TIMEOUT_MS = 30_000;
 const WEBFETCH_WIKIPEDIA_CONVERT_TIMEOUT_MS = 120_000;
@@ -48,19 +69,9 @@ const MAX_LIMIT = 20;
 const MAX_OFFSET = 200;
 const MAX_PAGE_FETCHES = 20;
 const WEBFETCH_INLINE_TOKEN_LIMIT = 20_000;
-const WEBFETCH_CACHE_ENABLED = (process.env.WEBFETCH_CACHE_ENABLED ?? "1").trim() !== "0";
-const WEBFETCH_CACHE_DIR = (
-  process.env.WEBFETCH_CACHE_DIR ?? `${process.env.HOME ?? "/tmp"}/.cache/opencode-webfetch`
-).trim();
-const WEBFETCH_CACHE_TTL_DAYS = Number.parseInt(process.env.WEBFETCH_CACHE_TTL_DAYS ?? "90", 10);
-const WEBFETCH_CACHE_TTL_MS =
-  Number.isFinite(WEBFETCH_CACHE_TTL_DAYS) && WEBFETCH_CACHE_TTL_DAYS > 0
-    ? WEBFETCH_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
-    : 90 * 24 * 60 * 60 * 1000;
 const TOKEN_ENCODER = getEncoding("o200k_base");
 const ISSUE_REPORTING_HINT =
   "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.";
-const REDDIT_APIFY_ACTOR = (process.env.REDDIT_APIFY_ACTOR ?? "spry_wholemeal/reddit-scraper").trim();
 const WIKIPEDIA_API_USER_AGENT = (
   process.env.WIKIPEDIA_API_USER_AGENT ?? "opencode-improved-webfetch/1.0 (plugin)"
 ).trim();
@@ -72,7 +83,8 @@ const WEBSEARCH_BASE_DESCRIPTION =
   "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
 
 function envFlagEnabled(value?: string): boolean {
-  const normalized = (value ?? "").trim().toLowerCase();
+  if (value === undefined) {return false;}
+  const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
@@ -106,17 +118,52 @@ const NARROWING_CATEGORIES = [
 ] as const;
 
 const VALID_CATEGORIES = new Set<string>(NARROWING_CATEGORIES);
+
+function searxngInstanceUrl(): string | undefined {
+  return process.env.SEARXNG_INSTANCE_URL?.trim();
+}
+
+function webFetchCacheEnabled(): boolean {
+  const value = process.env.WEBFETCH_CACHE_ENABLED?.trim();
+  if (value === undefined) {return false;}
+  assert.ok(value === "0" || value === "1", "WEBFETCH_CACHE_ENABLED must be 0 or 1.");
+  return value === "1";
+}
+
+function webFetchCacheDir(): string {
+  const directory = process.env.WEBFETCH_CACHE_DIR?.trim();
+  assert.ok(
+    directory !== undefined && directory.length > 0,
+    "WEBFETCH_CACHE_DIR is required when the webfetch cache is enabled.",
+  );
+  return directory;
+}
+
+function webFetchCacheTtlMs(): number {
+  const value = process.env.WEBFETCH_CACHE_TTL_DAYS?.trim();
+  assert.ok(
+    value !== undefined && value.length > 0,
+    "WEBFETCH_CACHE_TTL_DAYS is required when the webfetch cache is enabled.",
+  );
+  const ttlDays = Number(value);
+  assert.ok(
+    Number.isSafeInteger(ttlDays) && ttlDays > 0,
+    "WEBFETCH_CACHE_TTL_DAYS must be a positive integer.",
+  );
+  return ttlDays * 24 * 60 * 60 * 1000;
+}
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
 }
 
 function parseLimit(limit?: number): number {
-  if (!Number.isFinite(limit)) return DEFAULT_LIMIT;
+  if (!Number.isFinite(limit)) {return DEFAULT_LIMIT;}
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit ?? DEFAULT_LIMIT)));
 }
 
 function resolveOffset(offset?: number): { value: number; error?: string } {
-  if (offset === undefined) return { value: 0 };
+  if (offset === undefined) {return { value: 0 };}
   if (!Number.isFinite(offset) || !Number.isInteger(offset) || offset < 0) {
     return {
       value: 0,
@@ -134,7 +181,7 @@ function resolveOffset(offset?: number): { value: number; error?: string } {
 
 function clampSnippet(text: string, maxLen = 280): string {
   const clean = text.trim().replace(/\s+/g, " ");
-  if (clean.length <= maxLen) return clean;
+  if (clean.length <= maxLen) {return clean;}
   return `${clean.slice(0, maxLen - 1)}…`;
 }
 
@@ -143,7 +190,7 @@ function countTokens(text: string): number {
 }
 
 function resolveWebFetchCacheMode(overwriteCache?: boolean): { value: WebFetchCacheMode } {
-  return { value: overwriteCache ? "refresh" : "default" };
+  return { value: overwriteCache === true ? "refresh" : "default" };
 }
 
 type WebFetchCachePayload = {
@@ -162,18 +209,18 @@ type HttpMetadata = {
 
 function webFetchCachePath(url: string): string {
   const digest = createHash("sha256").update(url).digest("hex");
-  return `${WEBFETCH_CACHE_DIR}/${digest}.json`;
+  return `${webFetchCacheDir()}/${digest}.json`;
 }
 
 async function readWebFetchCache(
   url: string,
   overwriteCache: WebFetchCacheMode,
 ): Promise<WebFetchHandlerResult | undefined> {
-  if (!WEBFETCH_CACHE_ENABLED) return undefined;
-  if (overwriteCache === "refresh") return undefined;
+  if (!webFetchCacheEnabled()) {return undefined;}
+  if (overwriteCache === "refresh") {return undefined;}
   const path = webFetchCachePath(url);
   const file = Bun.file(path);
-  if (!(await file.exists())) return undefined;
+  if (!(await file.exists())) {return undefined;}
   try {
     const raw = await file.text();
     const parsed = JSON.parse(raw) as Partial<WebFetchCachePayload>;
@@ -187,7 +234,7 @@ async function readWebFetchCache(
       return undefined;
     }
     const cachedAt = Date.parse(parsed.cachedAt);
-    if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > WEBFETCH_CACHE_TTL_MS) {
+    if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > webFetchCacheTtlMs()) {
       await Bun.$`rm -f ${path}`.quiet();
       return undefined;
     }
@@ -205,11 +252,11 @@ async function writeWebFetchCache(
   url: string,
   result: WebFetchHandlerResult,
 ): Promise<void> {
-  if (!WEBFETCH_CACHE_ENABLED) return;
-  if (result.routeName.includes("/binary")) return;
-  if (result.routeName.startsWith("arxiv/library")) return;
-  if (!result.content.trim()) return;
-  await Bun.$`mkdir -p ${WEBFETCH_CACHE_DIR}`.quiet();
+  if (!webFetchCacheEnabled()) {return;}
+  if (result.routeName.includes("/binary")) {return;}
+  if (result.routeName.startsWith("arxiv/library")) {return;}
+  if (!result.content.trim()) {return;}
+  await Bun.$`mkdir -p ${webFetchCacheDir()}`.quiet();
   const payload: WebFetchCachePayload = {
     url,
     routeName: result.routeName,
@@ -225,7 +272,8 @@ function findWebFetchHandler(
   url: URL,
 ): WebFetchDomainHandler | undefined {
   return handlers.find((handler) =>
-    handler.domains.some((domain) => hostMatchesDomain(url.hostname, domain)),
+    handler.domains.some((domain) => hostMatchesDomain(url.hostname, domain)) &&
+    (handler.supports === undefined || handler.supports(url)),
   );
 }
 
@@ -267,7 +315,7 @@ async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
     "-lc",
     `curl -sSIL --compressed --max-time 30 ${JSON.stringify(url.toString())}`,
   ]);
-  if (result.exitCode !== 0) return {};
+  if (result.exitCode !== 0) {return {};}
 
   const headerBlocks = result.stdoutText
     .split(/\r?\n\r?\n/g)
@@ -278,7 +326,7 @@ async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
   const rawTrimmed = result.stdoutText.trim();
 
   const statusLine = lines.find((line) => /^HTTP\/\d+(?:\.\d+)?\s+\d{3}\b/i.test(line));
-  const statusCode = statusLine
+  const statusCode = statusLine !== undefined
     ? Number.parseInt(statusLine.replace(/^HTTP\/\d+(?:\.\d+)?\s+/, "").slice(0, 3), 10)
     : /^\d{3}$/.test(rawTrimmed)
       ? Number.parseInt(rawTrimmed, 10)
@@ -296,7 +344,7 @@ async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
       Number.isFinite(statusCode) && (statusCode ?? 0) >= 100 && (statusCode ?? 0) <= 599
         ? statusCode
         : undefined,
-    contentType: contentType && contentType.length > 0 ? contentType : undefined,
+    contentType: contentType !== undefined && contentType.length > 0 ? contentType : undefined,
     contentLength: Number.isFinite(contentLength) && contentLength >= 0 ? contentLength : undefined,
   };
 }
@@ -324,7 +372,7 @@ function formatArxivServiceMessage(input: {
   statusCode?: number;
   content: string;
 }): string | undefined {
-  if (!hostMatchesDomain(input.url.hostname, "arxiv.org")) return undefined;
+  if (!hostMatchesDomain(input.url.hostname, "arxiv.org")) {return undefined;}
   const body = input.content.trim().toLowerCase();
 
   if (input.statusCode === 429 || body === "rate exceeded." || body === "rate exceeded") {
@@ -349,16 +397,16 @@ function formatArxivServiceMessage(input: {
 }
 
 function buildArxivFallbackUrl(url: URL): URL | undefined {
-  if (!hostMatchesDomain(url.hostname, "arxiv.org")) return undefined;
-  if (url.pathname !== "/api/query") return undefined;
+  if (!hostMatchesDomain(url.hostname, "arxiv.org")) {return undefined;}
+  if (url.pathname !== "/api/query") {return undefined;}
 
   const rawIdList = (url.searchParams.get("id_list") ?? "").trim();
-  if (rawIdList) {
+  if (rawIdList.length > 0) {
     const firstId = rawIdList
       .split(",")
       .map((item) => item.trim())
       .find((item) => item.length > 0);
-    if (firstId) {
+    if (firstId !== undefined) {
       const normalizedId = firstId.replace(/^arxiv:/i, "");
       const fallback = new URL("https://arxiv.org/");
       fallback.pathname = `/abs/${normalizedId}`;
@@ -367,7 +415,7 @@ function buildArxivFallbackUrl(url: URL): URL | undefined {
   }
 
   const rawSearch = (url.searchParams.get("search_query") ?? "").trim();
-  if (rawSearch) {
+  if (rawSearch.length > 0) {
     const fallback = new URL("https://arxiv.org/search/");
     fallback.searchParams.set("query", rawSearch);
     fallback.searchParams.set("searchtype", "all");
@@ -426,17 +474,17 @@ async function formatWebFetchOutput(input: {
 }
 
 function augmentQueryWithDomains(query: string, domains: string[]): string {
-  if (domains.length === 0) return query;
+  if (domains.length === 0) {return query;}
   // `site:` is query syntax forwarded to engines; behavior depends on engine support.
   const siteClauses = domains.map((domain) => `site:${domain}`);
   return `${query} (${siteClauses.join(" OR ")})`;
 }
 
 function mapRecencyToTimeRange(recency?: number): string | undefined {
-  if (!Number.isFinite(recency)) return undefined;
-  const days = Math.max(0, Math.floor(recency ?? 0));
-  if (days <= 1) return "day";
-  if (days <= 31) return "month";
+  if (recency === undefined || !Number.isFinite(recency)) {return undefined;}
+  const days = Math.max(0, Math.floor(recency));
+  if (days <= 1) {return "day";}
+  if (days <= 31) {return "month";}
   return "year";
 }
 
@@ -445,67 +493,24 @@ function buildQueryUrl(baseUrl: string, args: { query: string; timeRange?: strin
   url.searchParams.set("q", args.query);
   url.searchParams.set("format", "json");
 
-  if (args.timeRange) {
+  if (args.timeRange !== undefined) {
     url.searchParams.set("time_range", args.timeRange);
   }
-  if (args.pageNumber && args.pageNumber > 1) {
+  if (args.pageNumber !== undefined && args.pageNumber > 1) {
     url.searchParams.set("pageno", String(args.pageNumber));
   }
 
   return url;
 }
 
-function asResponse(input: unknown): SearxngResponse {
-  if (!input || typeof input !== "object") {
-    throw new Error("Invalid search API response: expected object.");
-  }
-  const response = input as Record<string, unknown>;
-
-  if (typeof response.query !== "string") {
-    throw new Error("Invalid search API response: missing query.");
-  }
-  if (typeof response.number_of_results !== "number" || !Number.isFinite(response.number_of_results)) {
-    throw new Error("Invalid search API response: missing number_of_results.");
-  }
-  if (!Array.isArray(response.results)) {
-    throw new Error("Invalid search API response: missing results array.");
-  }
-  if (!Array.isArray(response.answers)) {
-    throw new Error("Invalid search API response: missing answers array.");
-  }
-  if (!Array.isArray(response.suggestions)) {
-    throw new Error("Invalid search API response: missing suggestions array.");
-  }
-  if (!Array.isArray(response.unresponsive_engines)) {
-    throw new Error("Invalid search API response: missing unresponsive_engines array.");
-  }
-
-  for (const item of response.results) {
-    if (!item || typeof item !== "object") {
-      throw new Error("Invalid search API response: result item is not an object.");
-    }
-    const result = item as Record<string, unknown>;
-    if (typeof result.title !== "string" || typeof result.url !== "string") {
-      throw new Error("Invalid search API response: result item missing title/url.");
-    }
-    if (typeof result.content !== "string") {
-      throw new Error("Invalid search API response: result item missing content.");
-    }
-    if (typeof result.engine !== "string" || typeof result.category !== "string") {
-      throw new Error("Invalid search API response: result item missing engine/category.");
-    }
-    if (!(typeof result.publishedDate === "string" || result.publishedDate === null)) {
-      throw new Error("Invalid search API response: invalid publishedDate.");
-    }
-  }
-
-  return response as unknown as SearxngResponse;
+function asResponse(input: JsonValue): SearxngResponse {
+  return searxngResponseSchema.parse(input);
 }
 
 function resolveCategory(category?: string): { bang?: string; error?: string } {
-  if (!category) return {};
+  if (category === undefined) {return {};}
   const raw = category.trim().toLowerCase();
-  if (!raw) return {};
+  if (raw.length === 0) {return {};}
 
   if (raw.startsWith("!")) {
     return {
@@ -541,7 +546,7 @@ function formatResults(input: {
 
   const lines: string[] = [];
   lines.push(`Query: ${input.query}`);
-  if (input.category) {
+  if (input.category !== undefined) {
     lines.push(`Category: ${input.category}`);
   }
   lines.push(`Offset: ${input.offset}`);
@@ -578,11 +583,11 @@ function formatResults(input: {
     lines.push(`${rank}. ${title}`);
     lines.push(`   URL: ${url}`);
 
-    if (result.publishedDate) {
+    if (result.publishedDate !== null) {
       lines.push(`   Published: ${result.publishedDate}`);
     }
 
-    if (result.content.trim()) {
+    if (result.content.trim().length > 0) {
       lines.push(`   Snippet: ${clampSnippet(result.content)}`);
     }
   }
@@ -621,12 +626,11 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     {
       name: "reddit",
       domains: REDDIT_DOMAINS,
+      supports: isRedditPostPermalink,
       handle: async ({ url }) =>
         fetchRedditPostMarkdown({
           url,
-          runCommand,
-          fetchFallbackWithW3M: fetchWebContentWithW3M,
-          apifyActor: REDDIT_APIFY_ACTOR,
+          fetchImpl: fetch,
         }),
     },
     {
@@ -651,8 +655,8 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       domains: tool.schema.array(tool.schema.string()).optional(),
     },
     async execute(args, context) {
-      const baseUrl = SEARXNG_INSTANCE_URL;
-      if (!baseUrl) {
+      const baseUrl = searxngInstanceUrl();
+      if (baseUrl === undefined || baseUrl.length === 0) {
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
           ISSUE_REPORTING_HINT,
@@ -695,7 +699,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         .filter(Boolean);
 
       const category = resolveCategory(args.category);
-      if (category.error) {
+      if (category.error !== undefined) {
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
           ISSUE_REPORTING_HINT,
@@ -704,7 +708,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       }
 
       const offset = resolveOffset(args.offset);
-      if (offset.error) {
+      if (offset.error !== undefined) {
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
           ISSUE_REPORTING_HINT,
@@ -713,7 +717,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       }
 
       let effectiveQuery = augmentQueryWithDomains(query, domains);
-      if (category.bang) {
+      if (category.bang !== undefined) {
         effectiveQuery = `${category.bang} ${effectiveQuery}`;
       }
 
@@ -762,7 +766,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
             throw new Error(`search request failed (HTTP ${response.status})`);
           }
 
-          const pageData = asResponse(await response.json());
+          const pageData = asResponse(
+            z.json().parse(JSON.parse(await response.text())),
+          );
           if (!firstResponse) {
             firstResponse = pageData;
           }
@@ -927,9 +933,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                     statusCode: httpMetadata.statusCode,
                     content: defaultResult.stdoutText,
                   });
-                  if (serviceMessage) {
+                  if (serviceMessage !== undefined) {
                     const fallbackUrl = buildArxivFallbackUrl(parsed);
-                    if (fallbackUrl) {
+                    if (fallbackUrl !== undefined) {
                       const fallbackResult = await fetchWebContentWithW3M(fallbackUrl);
                       if (
                         fallbackResult.exitCode === 0 &&
@@ -994,6 +1000,3 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     },
   };
 };
-
-// Backward-compatible export name while transitioning to improved-* naming.
-export const SearxngSearchPlugin = ImprovedWebSearchPlugin;
