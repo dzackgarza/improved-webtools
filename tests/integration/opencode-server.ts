@@ -1,4 +1,9 @@
-import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk";
+import {
+  createOpencodeClient,
+  createOpencodeServer,
+  type SessionMessagesResponse,
+  type ToolPart,
+} from "@opencode-ai/sdk";
 import getPort from "get-port";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -56,6 +61,19 @@ export function resolvedTool(tools: ListedTool[], id: string): ListedTool {
   return registeredTool;
 }
 
+function isWebFetchPart(part: SessionMessagesResponse[number]["parts"][number]): part is ToolPart {
+  return part.type === "tool" && part.tool === "webfetch";
+}
+
+function completedWebFetchOutput(messages: SessionMessagesResponse): string {
+  const webFetchPart = messages.flatMap((message) => message.parts).find(isWebFetchPart);
+  if (webFetchPart === undefined) {throw new Error("OpenCode did not call the shadowed webfetch tool.");}
+  if (webFetchPart.state.status !== "completed") {
+    throw new Error(`OpenCode webfetch ended with status ${webFetchPart.state.status}.`);
+  }
+  return webFetchPart.state.output;
+}
+
 export async function executeWebFetchThroughOpenCode(url: string): Promise<string> {
   const server = await startServer();
   try {
@@ -93,16 +111,7 @@ export async function executeWebFetchThroughOpenCode(url: string): Promise<strin
       throw new Error(`OpenCode did not return the integration messages: ${JSON.stringify(messages.error)}`);
     }
 
-    for (const message of messages.data) {
-      for (const part of message.parts) {
-        if (part.type !== "tool" || part.tool !== "webfetch") {continue;}
-        if (part.state.status !== "completed") {
-          throw new Error(`OpenCode webfetch ended with status ${part.state.status}.`);
-        }
-        return part.state.output;
-      }
-    }
-    throw new Error("OpenCode did not call the shadowed webfetch tool.");
+    return completedWebFetchOutput(messages.data);
   } finally {
     server.close();
   }
