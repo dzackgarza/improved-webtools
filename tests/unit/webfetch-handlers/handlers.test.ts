@@ -8,8 +8,10 @@ import {
   fetchArxivLibraryContent,
   buildGitHubCommandPlan,
   fetchGitHubContent,
+  fetchRedditPostMarkdown,
   fetchWikipediaMarkdown,
   fetchYoutubeTranscriptMarkdown,
+  isRedditPostPermalink,
 } from "@webfetch-handlers";
 
 function fixtureText(relativePath: string): string {
@@ -139,6 +141,63 @@ describe("webfetch handler modules", () => {
         sourceUrl: testCase.sourceUrl,
       });
     }
+  });
+
+  it("renders the Arctic Shift comment tree from real response fixtures", async () => {
+    const postFixture = fixtureText("reddit/arctic-shift-post-1hn44qh.json");
+    const treeFixture = fixtureText("reddit/arctic-shift-tree-1hn44qh.json");
+    const requestedUrls: string[] = [];
+    const fetchImpl = async (input: string | URL | Request) => {
+      const url = new URL(inputUrl(input));
+      requestedUrls.push(url.toString());
+      if (url.pathname === "/api/posts/ids") {
+        return new Response(postFixture, { status: 200 });
+      }
+      if (url.pathname === "/api/comments/tree") {
+        return new Response(treeFixture, { status: 200 });
+      }
+      return new Response("unexpected Arctic Shift endpoint", { status: 404 });
+    };
+
+    const output = await fetchRedditPostMarkdown({
+      url: new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/"),
+      fetchImpl,
+    });
+
+    expect(requestedUrls).toEqual([
+      "https://arctic-shift.photon-reddit.com/api/posts/ids?ids=1hn44qh",
+      "https://arctic-shift.photon-reddit.com/api/comments/tree?link_id=t3_1hn44qh&limit=25000",
+    ]);
+    expect(output.routeName).toBe("reddit");
+    expect(output.content).toContain("- Comments reported by post: 43");
+    expect(output.content).toContain("- Comments extracted: 2");
+    expect(output.content).toContain("- u/AssistanceLeather513 (score -12):");
+    expect(output.content).toContain("  - u/indiegameplus (score 10):");
+  });
+
+  it("selects the Reddit handler only for post permalinks", () => {
+    expect(
+      isRedditPostPermalink(new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/post/")),
+    ).toBe(true);
+    expect(isRedditPostPermalink(new URL("https://www.reddit.com/r/OpenAI"))).toBe(false);
+  });
+
+  it("rejects an Arctic Shift tree with collapsed comments", () => {
+    const postFixture = fixtureText("reddit/arctic-shift-post-1hn44qh.json");
+    const treeFixture = fixtureText("reddit/arctic-shift-tree-collapsed-1hn44qh.json");
+    const fetchImpl = async (input: string | URL | Request) => {
+      const url = new URL(inputUrl(input));
+      return new Response(url.pathname === "/api/posts/ids" ? postFixture : treeFixture, {
+        status: 200,
+      });
+    };
+
+    expect(
+      fetchRedditPostMarkdown({
+        url: new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/post/"),
+        fetchImpl,
+      }),
+    ).rejects.toThrow("The complete tree is unavailable");
   });
 
   it("extracts youtube captions from real yt-dlp subtitle fixture", async () => {
@@ -375,40 +434,32 @@ describe("webfetch handler modules", () => {
     expect(output.content).toContain("Reason:");
   });
 
-  it("throws for unsupported wikipedia URL shapes", async () => {
-    let rejected = false;
-    try {
-      await fetchWikipediaMarkdown({
+  it("throws for unsupported wikipedia URL shapes", () => {
+    expect(
+      fetchWikipediaMarkdown({
         url: new URL("https://en.wikipedia.org/"),
         userAgent: "test-agent",
         converterScriptPath: "/tmp/mock_converter.py",
         convertTimeoutMs: 120000,
         runCommand: async () => ({ stdoutText: "", stderrText: "", exitCode: 0 }),
-      });
-    } catch {
-      rejected = true;
-    }
-    expect(rejected).toBe(true);
+      }),
+    ).rejects.toThrow("unsupported wikipedia URL shape");
   });
 
-  it("throws for wikipedia parse API error payloads from real API fixture", async () => {
+  it("throws for wikipedia parse API error payloads from real API fixture", () => {
     const missingPage = fixtureJson("wikipedia/parse-missing-page.json");
     Reflect.set(globalThis, "fetch", async () =>
       new Response(JSON.stringify(missingPage), { status: 200, headers: { "content-type": "application/json" } }));
 
-    let rejected = false;
-    try {
-      await fetchWikipediaMarkdown({
+    expect(
+      fetchWikipediaMarkdown({
         url: new URL("https://en.wikipedia.org/wiki/Does_Not_Exist"),
         userAgent: "test-agent",
         converterScriptPath: "/tmp/mock_converter.py",
         convertTimeoutMs: 120000,
         runCommand: async () => ({ stdoutText: "", stderrText: "", exitCode: 0 }),
-      });
-    } catch {
-      rejected = true;
-    }
-    expect(rejected).toBe(true);
+      }),
+    ).rejects.toThrow("wikipedia parse API error");
   });
 
   it("normalizes arxiv IDs across supported URL shapes", () => {

@@ -1,6 +1,6 @@
 # Real Fixture Sources
 
-Captured on 2026-03-06 (UTC) from live commands/APIs.
+Most fixtures were captured on 2026-03-06 (UTC). The Reddit fixtures were captured on 2026-08-15 (UTC).
 
 ## GitHub
 
@@ -29,6 +29,24 @@ Captured on 2026-03-06 (UTC) from live commands/APIs.
 - `searxng/arxiv-lattice-page1.json`
 
   - `curl "$SEARXNG_INSTANCE_URL/search?q=arxiv+lattice&format=json&pageno=1"`
+
+## Reddit
+
+- `reddit/arctic-shift-post-1hn44qh.json`
+
+  - Captured from `https://arctic-shift.photon-reddit.com/api/posts/ids?ids=1hn44qh`.
+
+- `reddit/arctic-shift-tree-1hn44qh.json`
+
+  - Reduced from `https://arctic-shift.photon-reddit.com/api/comments/tree?link_id=t3_1hn44qh&limit=25000`.
+
+  - Preserves one real parent-child branch for deterministic tree rendering.
+
+- `reddit/arctic-shift-tree-collapsed-1hn44qh.json`
+
+  - Reduced from the same API endpoint with `limit=1`.
+
+  - Preserves a real `more` node for the incomplete-tree rejection test.
 
 ## Wikipedia
 

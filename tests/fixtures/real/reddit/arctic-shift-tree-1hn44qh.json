@@ -1,0 +1,34 @@
+{
+  "data": [
+    {
+      "kind": "t1",
+      "data": {
+        "id": "m3z08qd",
+        "author": "AssistanceLeather513",
+        "parent_id": "t3_1hn44qh",
+        "link_id": "t3_1hn44qh",
+        "body": "No, we need a break from AI development.",
+        "score": -12,
+        "replies": {
+          "kind": "Listing",
+          "data": {
+            "children": [
+              {
+                "kind": "t1",
+                "data": {
+                  "id": "m3z2laq",
+                  "author": "indiegameplus",
+                  "parent_id": "t1_m3z08qd",
+                  "link_id": "t3_1hn44qh",
+                  "body": "Bruh ur in the wrong subreddit",
+                  "score": 10,
+                  "replies": ""
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

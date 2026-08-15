@@ -1,5 +1,6 @@
 import { type Plugin, tool } from "@opencode-ai/plugin";
 import { getEncoding } from "js-tiktoken";
+import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -11,6 +12,7 @@ import {
   isArxivLibraryUrl,
   GITHUB_DOMAINS,
   hostMatchesDomain,
+  isRedditPostPermalink,
   REDDIT_DOMAINS,
   type CommandExecutionResult,
   type WebFetchDomainHandler,
@@ -32,7 +34,7 @@ const searxngResultSchema = z.object({
 const searxngAnswerSchema = z
   .union([
     z.string(),
-    z.object({ answer: z.string() }).passthrough(),
+    z.object({ answer: z.string() }),
   ])
   .transform((answer) =>
     typeof answer === "string" ? answer : answer.answer,
@@ -81,7 +83,8 @@ const WEBSEARCH_BASE_DESCRIPTION =
   "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
 
 function envFlagEnabled(value?: string): boolean {
-  const normalized = (value ?? "").trim().toLowerCase();
+  if (value === undefined) {return false;}
+  const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
@@ -116,25 +119,38 @@ const NARROWING_CATEGORIES = [
 
 const VALID_CATEGORIES = new Set<string>(NARROWING_CATEGORIES);
 
-function searxngInstanceUrl(): string {
-  return (process.env.SEARXNG_INSTANCE_URL ?? "").trim();
+function searxngInstanceUrl(): string | undefined {
+  return process.env.SEARXNG_INSTANCE_URL?.trim();
 }
 
 function webFetchCacheEnabled(): boolean {
-  return (process.env.WEBFETCH_CACHE_ENABLED ?? "1").trim() !== "0";
+  const value = process.env.WEBFETCH_CACHE_ENABLED?.trim();
+  if (value === undefined) {return false;}
+  assert.ok(value === "0" || value === "1", "WEBFETCH_CACHE_ENABLED must be 0 or 1.");
+  return value === "1";
 }
 
 function webFetchCacheDir(): string {
-  return (
-    process.env.WEBFETCH_CACHE_DIR ?? `${process.env.HOME ?? "/tmp"}/.cache/opencode-webfetch`
-  ).trim();
+  const directory = process.env.WEBFETCH_CACHE_DIR?.trim();
+  assert.ok(
+    directory !== undefined && directory.length > 0,
+    "WEBFETCH_CACHE_DIR is required when the webfetch cache is enabled.",
+  );
+  return directory;
 }
 
 function webFetchCacheTtlMs(): number {
-  const ttlDays = Number.parseInt(process.env.WEBFETCH_CACHE_TTL_DAYS ?? "90", 10);
-  return Number.isFinite(ttlDays) && ttlDays > 0
-    ? ttlDays * 24 * 60 * 60 * 1000
-    : 90 * 24 * 60 * 60 * 1000;
+  const value = process.env.WEBFETCH_CACHE_TTL_DAYS?.trim();
+  assert.ok(
+    value !== undefined && value.length > 0,
+    "WEBFETCH_CACHE_TTL_DAYS is required when the webfetch cache is enabled.",
+  );
+  const ttlDays = Number(value);
+  assert.ok(
+    Number.isSafeInteger(ttlDays) && ttlDays > 0,
+    "WEBFETCH_CACHE_TTL_DAYS must be a positive integer.",
+  );
+  return ttlDays * 24 * 60 * 60 * 1000;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -256,7 +272,8 @@ function findWebFetchHandler(
   url: URL,
 ): WebFetchDomainHandler | undefined {
   return handlers.find((handler) =>
-    handler.domains.some((domain) => hostMatchesDomain(url.hostname, domain)),
+    handler.domains.some((domain) => hostMatchesDomain(url.hostname, domain)) &&
+    (handler.supports === undefined || handler.supports(url)),
   );
 }
 
@@ -609,10 +626,11 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     {
       name: "reddit",
       domains: REDDIT_DOMAINS,
+      supports: isRedditPostPermalink,
       handle: async ({ url }) =>
         fetchRedditPostMarkdown({
           url,
-          runCommand,
+          fetchImpl: fetch,
         }),
     },
     {
@@ -638,7 +656,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
     },
     async execute(args, context) {
       const baseUrl = searxngInstanceUrl();
-      if (!baseUrl) {
+      if (baseUrl === undefined || baseUrl.length === 0) {
         return [
           `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
           ISSUE_REPORTING_HINT,
