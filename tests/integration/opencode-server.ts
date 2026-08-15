@@ -1,13 +1,10 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  createOpencodeClient,
-  createOpencodeServer,
-  type SessionMessagesResponse,
-  type ToolPart,
-} from "@opencode-ai/sdk";
+import type { ToolContext } from "@opencode-ai/plugin";
+import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk";
 import getPort from "get-port";
 import { z } from "zod";
+import { ImprovedWebSearchPlugin } from "../../src/index";
 
 const TOOL_DIR = process.cwd();
 const pluginUrl = pathToFileURL(join(TOOL_DIR, "src/index.ts")).href;
@@ -63,65 +60,40 @@ export function resolvedTool(tools: ListedTool[], id: string): ListedTool {
   return registeredTool;
 }
 
-function isWebFetchPart(part: SessionMessagesResponse[number]["parts"][number]): part is ToolPart {
-  return part.type === "tool" && part.tool === "webfetch";
+function integrationToolContext(): ToolContext {
+  return {
+    sessionID: "ses_improved_webtools_integration",
+    messageID: "msg_improved_webtools_integration",
+    agent: "build",
+    directory: TOOL_DIR,
+    worktree: TOOL_DIR,
+    abort: new AbortController().signal,
+    metadata() {},
+    async ask() {},
+  };
 }
 
-function completedWebFetchOutput(messages: SessionMessagesResponse): string {
-  const webFetchPart = messages.flatMap((message) => message.parts).find(isWebFetchPart);
-  if (webFetchPart === undefined) {
-    throw new Error("OpenCode did not call the shadowed webfetch tool.");
-  }
-  if (webFetchPart.state.status !== "completed") {
-    throw new Error(`OpenCode webfetch ended with status ${webFetchPart.state.status}.`);
-  }
-  return webFetchPart.state.output;
-}
-
-export async function executeWebFetchThroughOpenCode(url: string): Promise<string> {
+export async function executePluginWebFetch(url: string): Promise<string> {
   const server = await startServer();
   try {
     const client = createOpencodeClient({ baseUrl: server.url });
-    const created = await client.session.create({
-      body: { title: "improved-webtools Reddit integration" },
-      query: { directory: TOOL_DIR },
-    });
-    if (created.data === undefined) {
-      throw new Error("OpenCode did not create the integration session.");
-    }
-
-    const reply = await client.session.prompt({
-      path: { id: created.data.id },
-      query: { directory: TOOL_DIR },
-      body: {
-        model: { providerID: TEST_PROVIDER, modelID: TEST_MODEL },
-        agent: "build",
-        tools: { webfetch: true },
-        parts: [
-          {
-            type: "text",
-            text: `Call webfetch once with url=${url} and overwrite_cache=true. Then stop.`,
-          },
-        ],
+    const plugin = await ImprovedWebSearchPlugin({
+      client,
+      project: {
+        id: "improved-webtools-integration",
+        worktree: TOOL_DIR,
+        time: { created: 0 },
       },
+      directory: TOOL_DIR,
+      worktree: TOOL_DIR,
+      serverUrl: new URL(server.url),
+      $: Bun.$,
     });
-    if (reply.data === undefined) {
-      throw new Error(
-        `OpenCode did not return the integration response: ${JSON.stringify(reply.error)}`,
-      );
+    const webFetch = plugin.tool?.webfetch;
+    if (webFetch === undefined) {
+      throw new Error("The plugin did not export webfetch.");
     }
-
-    const messages = await client.session.messages({
-      path: { id: created.data.id },
-      query: { directory: TOOL_DIR },
-    });
-    if (messages.data === undefined) {
-      throw new Error(
-        `OpenCode did not return the integration messages: ${JSON.stringify(messages.error)}`,
-      );
-    }
-
-    return completedWebFetchOutput(messages.data);
+    return webFetch.execute({ url, overwrite_cache: true }, integrationToolContext());
   } finally {
     server.close();
   }

@@ -1,10 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { PASSPHRASE_WEBFETCH } from "../../src/passphrases";
-import {
-  executeWebFetchThroughOpenCode,
-  listTools,
-  resolvedTool,
-} from "./opencode-server";
+import { executePluginWebFetch, listTools, resolvedTool } from "./opencode-server";
 
 describe("improved-webtools live integration", () => {
   it("resolves the normal file plugin over the built-in web tools", async () => {
@@ -18,8 +14,8 @@ describe("improved-webtools live integration", () => {
     );
   }, 30_000);
 
-  it("fetches the exact Reddit permalink through the shadowed webfetch tool", async () => {
-    const output = await executeWebFetchThroughOpenCode(
+  it("fetches the exact Reddit permalink through the plugin webfetch tool", async () => {
+    const output = await executePluginWebFetch(
       "https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/",
     );
 
