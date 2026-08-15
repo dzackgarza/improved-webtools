@@ -9,6 +9,7 @@ Usage:
 """
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -18,6 +19,8 @@ from typing import Annotated, Optional
 
 from fastmcp import FastMCP, Context
 from pydantic import Field
+
+LOGGER = logging.getLogger(__name__)
 
 # Server metadata
 mcp = FastMCP(
@@ -138,9 +141,8 @@ def main() -> None:
     # 1. Check Env Var
     url = os.environ.get("SEARXNG_INSTANCE_URL")
     if not url:
-        print(
-            "CRITICAL: SEARXNG_INSTANCE_URL is not set. MCP server cannot start.",
-            file=sys.stderr,
+        LOGGER.critical(
+            "SEARXNG_INSTANCE_URL is not set. MCP server cannot start."
         )
         sys.exit(1)
 
@@ -151,9 +153,10 @@ def main() -> None:
             if response.getcode() >= 400:
                 raise Exception(f"HTTP {response.getcode()}")
     except Exception as e:
-        print(
-            f"CRITICAL: SearxNG instance at {url} is unreachable: {e}",
-            file=sys.stderr,
+        LOGGER.critical(
+            "SearxNG instance at %s is unreachable: %s",
+            url,
+            e,
         )
         sys.exit(1)
 
