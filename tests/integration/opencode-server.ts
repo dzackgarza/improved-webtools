@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   createOpencodeClient,
   createOpencodeServer,
@@ -5,8 +7,6 @@ import {
   type ToolPart,
 } from "@opencode-ai/sdk";
 import getPort from "get-port";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { z } from "zod";
 
 const TOOL_DIR = process.cwd();
@@ -57,7 +57,9 @@ export function resolvedTool(tools: ListedTool[], id: string): ListedTool {
   // OpenCode resolves duplicate IDs by registry order. The final registration wins.
   // Reference: https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/tools.ts
   const registeredTool = tools.findLast((candidate) => candidate.id === id);
-  if (registeredTool === undefined) {throw new Error(`OpenCode did not register ${id}.`);}
+  if (registeredTool === undefined) {
+    throw new Error(`OpenCode did not register ${id}.`);
+  }
   return registeredTool;
 }
 
@@ -67,7 +69,9 @@ function isWebFetchPart(part: SessionMessagesResponse[number]["parts"][number]):
 
 function completedWebFetchOutput(messages: SessionMessagesResponse): string {
   const webFetchPart = messages.flatMap((message) => message.parts).find(isWebFetchPart);
-  if (webFetchPart === undefined) {throw new Error("OpenCode did not call the shadowed webfetch tool.");}
+  if (webFetchPart === undefined) {
+    throw new Error("OpenCode did not call the shadowed webfetch tool.");
+  }
   if (webFetchPart.state.status !== "completed") {
     throw new Error(`OpenCode webfetch ended with status ${webFetchPart.state.status}.`);
   }
@@ -82,7 +86,9 @@ export async function executeWebFetchThroughOpenCode(url: string): Promise<strin
       body: { title: "improved-webtools Reddit integration" },
       query: { directory: TOOL_DIR },
     });
-    if (created.data === undefined) {throw new Error("OpenCode did not create the integration session.");}
+    if (created.data === undefined) {
+      throw new Error("OpenCode did not create the integration session.");
+    }
 
     const reply = await client.session.prompt({
       path: { id: created.data.id },
@@ -100,7 +106,9 @@ export async function executeWebFetchThroughOpenCode(url: string): Promise<strin
       },
     });
     if (reply.data === undefined) {
-      throw new Error(`OpenCode did not return the integration response: ${JSON.stringify(reply.error)}`);
+      throw new Error(
+        `OpenCode did not return the integration response: ${JSON.stringify(reply.error)}`,
+      );
     }
 
     const messages = await client.session.messages({
@@ -108,7 +116,9 @@ export async function executeWebFetchThroughOpenCode(url: string): Promise<strin
       query: { directory: TOOL_DIR },
     });
     if (messages.data === undefined) {
-      throw new Error(`OpenCode did not return the integration messages: ${JSON.stringify(messages.error)}`);
+      throw new Error(
+        `OpenCode did not return the integration messages: ${JSON.stringify(messages.error)}`,
+      );
     }
 
     return completedWebFetchOutput(messages.data);
