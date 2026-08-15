@@ -2,7 +2,7 @@
   "name": "@dzackgarza/improved-webtools",
   "scripts": {
     "test": "opencode --version && bun test --coverage --coverage-reporter=lcov --coverage-dir=. && bun run test:debug",
-    "test:debug": "bun --env-file=.opencode-debug.env test ./tests/integration/webtools-plugin-debug.verify.ts",
+    "test:debug": "IMPROVED_WEBTOOLS_DEBUG_MODE=1 bun test ./tests/integration/webtools-plugin-debug.verify.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
