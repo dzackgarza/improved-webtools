@@ -101,11 +101,14 @@ In debug mode the same behavior is exposed as `webfetch_debug`.
 
 **Environment Variables:**
 
-- `WEBFETCH_CACHE_ENABLED`: Set to `1` to enable the webfetch cache. The cache is off when this variable is unset.
+- `WEBFETCH_CACHE_ENABLED`: Set to `1` to enable the webfetch cache.
+  The cache is off when this variable is unset.
 
-- `WEBFETCH_CACHE_DIR`: Required when the webfetch cache is enabled. Set it to the cache directory path.
+- `WEBFETCH_CACHE_DIR`: Required when the webfetch cache is enabled.
+  Set it to the cache directory path.
 
-- `WEBFETCH_CACHE_TTL_DAYS`: Required when the webfetch cache is enabled. Set it to a positive integer.
+- `WEBFETCH_CACHE_TTL_DAYS`: Required when the webfetch cache is enabled.
+  Set it to a positive integer.
 
 - `WEBFETCH_ARXIV_LIBRARY_DIR`: Overrides the default artifact root at `~/.cache/opencode-arxiv-library`
 
