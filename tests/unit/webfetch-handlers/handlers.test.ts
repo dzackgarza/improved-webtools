@@ -287,6 +287,54 @@ Long-hour timestamp should parse too`;
     expect(output.content).not.toContain("should not leak");
   });
 
+  it("parses non-hour WebVTT timestamps and keeps cue-id separated from text", async () => {
+    const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
+    const nonHourVtt = `WEBVTT
+
+00:11.000 --> 00:13.000
+short clip
+
+cue-42
+00:00:01.000 --> 00:00:02.000
+starts with cue ID
+`;
+
+    const output = await fetchYoutubeTranscriptMarkdown({
+      url: new URL("https://youtu.be/dQw4w9WgXcQ"),
+      runCommand: async (args) => {
+        if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
+
+        if (args.includes("--list-subs")) {
+          return { stdoutText: listSubs, stderrText: "", exitCode: 0 };
+        }
+
+        if (args.includes("--write-subs")) {
+          const outputIndex = args.indexOf("-o");
+          const template = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
+          if (template) {
+            const slash = template.lastIndexOf("/");
+            const dir = slash >= 0 ? template.slice(0, slash) : ".";
+            await Bun.$`mkdir -p ${dir}`.quiet();
+            await Bun.write(`${dir}/dQw4w9WgXcQ.en.vtt`, nonHourVtt);
+          }
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
+
+        return { stdoutText: "", stderrText: "unexpected", exitCode: 1 };
+      },
+    });
+
+    expect(output.routeName).toBe("youtube");
+    expect(output.content).toContain("00:00:11.000 short clip");
+    expect(output.content).toContain("00:00:01.000 starts with cue ID");
+    expect(output.content).not.toContain("cue-42");
+  });
+
   it("preserves every cue line, including repeated timestamps", async () => {
     const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
     const duplicateVtt = `WEBVTT
@@ -597,7 +645,61 @@ second line`;
     expect(output.content).toContain("bun | node | deno");
     expect(output.content).toContain("ffmpeg");
     expect(output.content).toContain("ffprobe");
-    expect(dependencyCalls.length).toBe(1);
+    expect(output.content).toContain("- uvx\n- bun | node | deno\n- ffmpeg\n- ffprobe");
+    expect(dependencyCalls).toHaveLength(6);
+
+    const expectedDependencies = ["uvx", "ffmpeg", "ffprobe", "bun", "node", "deno"];
+    const seenChecks = new Set<string>();
+    for (const call of dependencyCalls) {
+      const command = call[2] ?? "";
+      for (const dependency of expectedDependencies) {
+        if (command.includes(`"${dependency}"`) || command.includes(`'${dependency}'`)) {
+          seenChecks.add(dependency);
+        }
+      }
+      expect(command).toContain("command -v");
+    }
+    expect(Array.from(seenChecks)).toEqual(expect.arrayContaining(expectedDependencies));
+  });
+
+  it("sanitizes cookies path from audio-stage failures", async () => {
+    const originalCookiesFile = process.env.YTDLP_COOKIES_FILE;
+    process.env.YTDLP_COOKIES_FILE = "/tmp/secret-cookie-path.txt";
+    const listSubs = fixtureText("youtube/dQw4w9WgXcQ.list-subs.txt");
+    const output = await fetchYoutubeTranscriptMarkdown({
+      url: new URL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+      runCommand: async (args) => {
+        if (args[0] === "sh" && args[1] === "-lc") {
+          if (args[2]?.includes("DEP_CHECK:")) {
+            return { stdoutText: youtubeDependencyCheckOutput(), stderrText: "", exitCode: 0 };
+          }
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
+        if (args.includes("--list-subs")) {
+          return { stdoutText: listSubs, stderrText: "", exitCode: 0 };
+        }
+        if (args.includes("--write-subs")) {
+          return { stdoutText: "", stderrText: "", exitCode: 0 };
+        }
+        if (args.includes("-x") && args.includes("--audio-format")) {
+          return {
+            stdoutText: "",
+            stderrText: "Using cookies from /tmp/secret-cookie-path.txt",
+            exitCode: 1,
+          };
+        }
+        return { stdoutText: "", stderrText: "", exitCode: 0 };
+      },
+    });
+
+    expect(output.content).toContain("Transcript extraction failed at audio download stage.");
+    expect(output.content).toContain("Reason: Using cookies from [redacted-cookies-file]");
+    expect(output.content).not.toContain("/tmp/secret-cookie-path.txt");
+    if (originalCookiesFile === undefined) {
+      delete process.env.YTDLP_COOKIES_FILE;
+    } else {
+      process.env.YTDLP_COOKIES_FILE = originalCookiesFile;
+    }
   });
 
   it("sanitizes cookies path from dependency and extractor failures", async () => {

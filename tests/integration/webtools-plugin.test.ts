@@ -181,7 +181,7 @@ function ensureCompletedToolUse(
   const match = findCompletedToolUse(events, toolName);
   if (!match) {
     const summary = summarizeResult(runResult);
-    expect.fail(`Missing completed tool_use for ${toolName}.\n${summary}`);
+    throw new Error(`Missing completed tool_use for ${toolName}.\n${summary}`);
   }
   return match;
 }

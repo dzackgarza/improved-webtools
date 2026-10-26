@@ -105,37 +105,41 @@ function parseWebVtt(vtt: string): VTTData {
 
 async function checkYouTubeDependencies(runCommand: RunCommand): Promise<string[]> {
   const commands = ["uvx", "ffmpeg", "ffprobe", "bun", "node", "deno"];
-  const checkScript = commands
-    .map((command) =>
-      `command -v ${JSON.stringify(command)} >/dev/null 2>&1 && echo "DEP_CHECK:${command}:1" || echo "DEP_CHECK:${command}:0"`)
-    .join("; ");
+  const checkScript = (command: string) =>
+    `command -v ${JSON.stringify(command)} >/dev/null 2>&1 && echo "DEP_CHECK:${command}:1" || echo "DEP_CHECK:${command}:0"`;
 
-  const checkResult = await runCommand(["sh", "-lc", checkScript]);
-  const results = new Map<string, boolean>();
-  for (const line of checkResult.stdoutText.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("DEP_CHECK:")) {
-      continue;
+  const checkPromises = commands.map(async (command) => {
+    try {
+      const checkResult = await runCommand(["sh", "-lc", checkScript(command)]);
+      const match = checkResult.stdoutText
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line.startsWith(`DEP_CHECK:${command}:`));
+      if (match) {
+        const payload = match.slice("DEP_CHECK:".length);
+        const parts = payload.split(":");
+        if (parts.length === 2 && parts[1] === "1") {
+          return { name: command, available: true };
+        }
+      }
+      return { name: command, available: false };
+    } catch {
+      return { name: command, available: false };
     }
-    const payload = trimmed.slice("DEP_CHECK:".length);
-    const parts = payload.split(":");
-    if (parts.length !== 2) {
-      continue;
-    }
-    const name = parts[0]?.trim();
-    const value = parts[1]?.trim();
-    if (!name || (value !== "0" && value !== "1")) {
-      continue;
-    }
-    results.set(name, value === "1");
+  });
+
+  const results = await Promise.all(checkPromises);
+  const available = new Map<string, boolean>();
+  for (const result of results) {
+    available.set(result.name, result.available);
   }
 
-  const hasUvx = results.get("uvx") ?? false;
-  const hasFfmpeg = results.get("ffmpeg") ?? false;
-  const hasFfprobe = results.get("ffprobe") ?? false;
-  const hasBun = results.get("bun") ?? false;
-  const hasNode = results.get("node") ?? false;
-  const hasDeno = results.get("deno") ?? false;
+  const hasUvx = available.get("uvx") ?? false;
+  const hasFfmpeg = available.get("ffmpeg") ?? false;
+  const hasFfprobe = available.get("ffprobe") ?? false;
+  const hasBun = available.get("bun") ?? false;
+  const hasNode = available.get("node") ?? false;
+  const hasDeno = available.get("deno") ?? false;
 
   const checks: DependencyCheckResult[] = [
     { name: "uvx", missing: !hasUvx },
