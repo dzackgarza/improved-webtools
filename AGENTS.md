@@ -1,10 +1,10 @@
 # Agent Guidelines: Improved Web Tools
 
-This plugin exists for the **sole purpose** of shadowing and overriding the default OpenCode built-in tools.
+This plugin exists for the sole purpose of shadowing and overriding the default OpenCode built-in tools.
 
 ## Shadowing Mandate
 
-The intention of this plugin **IS TO SHADOW** the OpenCode built-ins. Any other behavior is a deviation from the core design.
+The intention of this plugin is to shadow the OpenCode built-ins. Any other behavior is a deviation from the core design.
 
 ### Target Built-ins
 In the current OpenCode build used in this workspace, the built-ins being shadowed are:
@@ -29,7 +29,7 @@ Do not treat the debug aliases as normal product behavior.
 | **Web Search** | `websearch` | `websearch_debug` |
 
 ### Local git+ transport
-Using `git+` with local git repos (e.g., `git+file://`, local `git+ssh://`) was never an intended route and DOES NOT WORK. Never even try it; it is totally irrelevant when the `file://` directive exists for local development.
+Using `git+` with local git repos (e.g., `git+file://`, local `git+ssh://`) is not a supported route and does not work. For local development, use the `file://` directive instead.
 
 ### Test Order
 When debugging loading or shadowing, use this order:
@@ -38,7 +38,7 @@ When debugging loading or shadowing, use this order:
 3. Prove the plugin loads in debug mode via `git+`
 4. Prove the plugin shadows in normal mode via `git+`
 
-**DO NOT** treat the non-shadowing names as standard tools. They are internal debug hooks only.
+The non-shadowing names are internal debug hooks, not standard tools.
 
 <!-- agent-memory:start -->
 # Agent memory
