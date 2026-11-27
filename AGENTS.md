@@ -1,3 +1,12 @@
+> **Planning migration — Spec Kit and itree**
+>
+> Select the work-unit issue with itree. Use Spec Kit to plan and execute the work.
+> The issue body and comments hold the current plan, tasks, progress and evidence.
+> Earlier instructions that assign this work to vault cards or a separate task list
+> identify records to migrate. Match each obligation to its owning issue. Preserve
+> task IDs, order, prerequisites, acceptance criteria and evidence. Verify the transfer
+> on the issue before retiring the old tracker. An open obligation stays open.
+
 # Agent Guidelines: Improved Web Tools
 
 This plugin exists for the sole purpose of shadowing and overriding the default OpenCode built-in tools.
@@ -65,7 +74,7 @@ agent-memory add --scope project --type context --title <title> --content <conte
 agent-memory add --scope project --type reference --title <title> --content <content>
 ```
 
-Plan work is card-backed. Create and update plan cards with `agent-memory plan add` and `agent-memory plan update`, not `agent-memory add --type plan`.
+Use Spec Kit to plan each itree work unit. Its GitHub issue owns the current plan, tasks and progress.
 
 Use `agent-memory retrieve <key>`, `agent-memory update <key>`, and `agent-memory delete <key>` for memory CRUD.
 
