@@ -211,7 +211,7 @@ describe("searxng-search plugin", () => {
     });
 
     expect(output).toContain(
-      "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
+      "[improved-webtools diagnostic] ID: improved-webtools/websearch",
     );
     expect(output).toContain("Showing results: 2-3 of 0");
     expect(output).toContain(openAiExpectedWindow[0]?.url ?? "");
@@ -244,7 +244,7 @@ describe("searxng-search plugin", () => {
     );
 
     expect(output).toContain(
-      "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
+      "[improved-webtools diagnostic] ID: improved-webtools/websearch",
     );
     expect(output).toContain(`Invalid category: "invalid_category".`);
     expect(output).toContain(
@@ -298,7 +298,7 @@ describe("searxng-search plugin", () => {
     expect(oversizedWrite).toBeDefined();
     expect(cacheWrite).toBeDefined();
     expect(oversizedWrite!.content).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
+      "[improved-webtools diagnostic] ID: improved-webtools/webfetch",
     );
     expect(oversizedWrite!.content).toContain(`Route: default`);
     expect(oversizedWrite!.content).toContain(
@@ -307,7 +307,7 @@ describe("searxng-search plugin", () => {
     expect(oversizedWrite!.content).toContain(largePrefix);
 
     expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
+      "[improved-webtools diagnostic] ID: improved-webtools/webfetch",
     );
     expect(output).toContain("Route: default");
     expect(output).toContain(
@@ -370,7 +370,7 @@ describe("searxng-search plugin", () => {
     expect(calls[0]?.[2]).toContain("curl -sSIL");
     expect(calls[1]?.[2]).toContain('curl -sSL --compressed --max-time 30 -o "$outfile"');
     expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
+      "[improved-webtools diagnostic] ID: improved-webtools/webfetch",
     );
     expect(output).toContain("Route: default/binary-pdf");
     expect(output).toContain(
@@ -434,7 +434,7 @@ describe("searxng-search plugin", () => {
     );
 
     expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
+      "[improved-webtools diagnostic] ID: improved-webtools/webfetch",
     );
     expect(output).toContain("Route: youtube");
     expect(output).toContain("# YouTube Transcript");
@@ -470,7 +470,7 @@ describe("searxng-search plugin", () => {
     );
 
     expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
+      "[improved-webtools diagnostic] ID: improved-webtools/webfetch",
     );
     expect(output).toContain("Route: wikipedia");
     expect(output).toContain("# Fourier transform");
