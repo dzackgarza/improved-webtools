@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { PASSPHRASE_WEBFETCH } from "../../src/passphrases";
 import { executePluginWebFetch, listTools, resolvedTool } from "./opencode-server";
 
 describe("improved-webtools live integration", () => {
@@ -19,7 +18,7 @@ describe("improved-webtools live integration", () => {
       "https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/",
     );
 
-    expect(output).toContain(PASSPHRASE_WEBFETCH);
+    expect(output).toContain("[improved-webtools diagnostic] ID: improved-webtools/webfetch");
     expect(output).toContain("- Author: u/Thinklikeachef");
     expect(output).toMatch(/^- Comments extracted: [1-9][0-9]*$/m);
     expect(output).toMatch(/^  - u\/[^\n]+ \(score -?[0-9]+\):$/m);

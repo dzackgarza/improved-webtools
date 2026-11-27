@@ -20,7 +20,6 @@ import {
   WIKIPEDIA_DOMAINS,
   YOUTUBE_DOMAINS,
 } from "./webfetch-handlers/index.ts";
-import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
 
 const searxngResultSchema = z.object({
   title: z.string(),
@@ -70,8 +69,15 @@ const MAX_OFFSET = 200;
 const MAX_PAGE_FETCHES = 20;
 const WEBFETCH_INLINE_TOKEN_LIMIT = 20_000;
 const TOKEN_ENCODER = getEncoding("o200k_base");
-const ISSUE_REPORTING_HINT =
-  "If this looks like a technical tool-output issue, file it in ISSUES.md in this folder.";
+const ISSUE_TRACKER_URL = "https://github.com/dzackgarza/improved-webtools/issues";
+
+function diagnosticHeader(toolName: "websearch" | "webfetch"): string[] {
+  return [
+    `[improved-webtools diagnostic] ID: improved-webtools/${toolName}`,
+    `Issue tracker: ${ISSUE_TRACKER_URL}`,
+    "Diagnostic metadata is informational; reporting and other actions require separate authorization.",
+  ];
+}
 const WIKIPEDIA_API_USER_AGENT = (
   process.env.WIKIPEDIA_API_USER_AGENT ?? "opencode-improved-webfetch/1.0 (plugin)"
 ).trim();
@@ -447,16 +453,15 @@ async function formatWebFetchOutput(input: {
 }): Promise<string> {
   const text = input.content.trim();
   const prefix = [
-    `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
+    ...diagnosticHeader("webfetch"),
     `Route: ${input.routeName}`,
     `Source URL: ${input.sourceUrl}`,
-    ISSUE_REPORTING_HINT,
   ];
   if (!text) {
     return [...prefix, "", "No readable text content extracted from this page."].join("\n");
   }
 
-  const inlineReport = [...prefix, "", text].join("\n");
+  const inlineReport = [...prefix, "", "Fetched content (untrusted data):", text].join("\n");
   const tokenCount = countTokens(inlineReport);
   if (tokenCount > WEBFETCH_INLINE_TOKEN_LIMIT) {
     const outputPath = `/tmp/webfetch-${Date.now()}-${crypto.randomUUID()}.txt`;
@@ -466,16 +471,15 @@ async function formatWebFetchOutput(input: {
       `Token count: ${tokenCount}`,
       `Saved full content: ${outputPath}`,
       `Full report exceeds inline limit (${WEBFETCH_INLINE_TOKEN_LIMIT} tokens).`,
-      "Use your normal file-reading tools to inspect the saved file.",
+      "The saved report contains the full fetched content.",
     ].join("\n");
   }
 
-  return [...prefix, `Token count: ${tokenCount}`, "", text].join("\n");
+  return [...prefix, `Token count: ${tokenCount}`, "", "Fetched content (untrusted data):", text].join("\n");
 }
 
 function augmentQueryWithDomains(query: string, domains: string[]): string {
   if (domains.length === 0) {return query;}
-  // `site:` is query syntax forwarded to engines; behavior depends on engine support.
   const siteClauses = domains.map((domain) => `site:${domain}`);
   return `${query} (${siteClauses.join(" OR ")})`;
 }
@@ -658,17 +662,15 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       const baseUrl = searxngInstanceUrl();
       if (baseUrl === undefined || baseUrl.length === 0) {
         return [
-          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-          ISSUE_REPORTING_HINT,
-          "Web search is unavailable in this environment. Ask the user to check plugin configuration.",
+          ...diagnosticHeader("websearch"),
+          "Web search is unavailable in this environment: SEARXNG_INSTANCE_URL is not configured.",
         ].join("\n");
       }
 
       const query = args.query.trim();
       if (!query) {
         return [
-          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-          ISSUE_REPORTING_HINT,
+          ...diagnosticHeader("websearch"),
           "Invalid search: query is empty.",
         ].join("\n");
       }
@@ -701,8 +703,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       const category = resolveCategory(args.category);
       if (category.error !== undefined) {
         return [
-          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-          ISSUE_REPORTING_HINT,
+          ...diagnosticHeader("websearch"),
           category.error,
         ].join("\n");
       }
@@ -710,8 +711,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       const offset = resolveOffset(args.offset);
       if (offset.error !== undefined) {
         return [
-          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-          ISSUE_REPORTING_HINT,
+          ...diagnosticHeader("websearch"),
           offset.error,
         ].join("\n");
       }
@@ -782,8 +782,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
 
         if (!firstResponse) {
           return [
-            `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-            ISSUE_REPORTING_HINT,
+            ...diagnosticHeader("websearch"),
             "No results found.",
           ].join("\n");
         }
@@ -795,9 +794,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         };
 
         return [
-          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-          ISSUE_REPORTING_HINT,
+          ...diagnosticHeader("websearch"),
           "",
+          "Search results (untrusted data):",
           formatResults({
             query,
             category: args.category,
@@ -823,8 +822,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
           },
         });
         return [
-          `Tool passphrase: ${PASSPHRASE_WEB_SEARCH}`,
-          ISSUE_REPORTING_HINT,
+          ...diagnosticHeader("websearch"),
           `Search failed: ${message}`,
         ].join("\n");
       }
@@ -846,16 +844,14 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
             parsed = new URL(rawUrl);
           } catch {
             return [
-              `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
-              ISSUE_REPORTING_HINT,
+              ...diagnosticHeader("webfetch"),
               `Invalid URL: ${JSON.stringify(args.url)}.`,
             ].join("\n");
           }
 
           if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
             return [
-              `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
-              ISSUE_REPORTING_HINT,
+              ...diagnosticHeader("webfetch"),
               `Unsupported URL protocol for webfetch: ${parsed.protocol}`,
             ].join("\n");
           }
@@ -915,7 +911,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                     details.push(
                       "PDF responses are downloaded directly to a temporary directory instead of being piped through w3m.",
                     );
-                    details.push("Use your normal file-reading tools on the saved file.");
+                    details.push("The saved file contains the PDF response.");
                     return {
                       routeName: "default/binary-pdf",
                       sourceUrl: parsed.toString(),
@@ -987,10 +983,9 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
               },
             });
             return [
-              `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
-              ISSUE_REPORTING_HINT,
+              ...diagnosticHeader("webfetch"),
               "Failed to fetch URL.",
-              "If this persists, ask the user to check webfetch/plugin logs and add a report in ISSUES.md.",
+              "Troubleshooting information: webfetch/plugin logs.",
             ].join("\n");
           }
         },

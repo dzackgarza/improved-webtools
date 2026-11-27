@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 from fastmcp import Client
 
-# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from server import mcp
 
@@ -53,8 +52,8 @@ class TestWebFetch:
             arguments={"url": "https://example.com"},
         )
         assert result is not None
-        # Should contain passphrase or content
-        assert "PASS_WEBFETCH" in str(result) or len(str(result)) > 0
+        assert "[improved-webtools diagnostic] ID: improved-webtools/webfetch" in str(result)
+        assert "https://github.com/dzackgarza/improved-webtools/issues" in str(result)
 
 
 class TestWebSearch:
@@ -67,8 +66,8 @@ class TestWebSearch:
             arguments={"query": "test", "num_results": 3},
         )
         assert result is not None
-        # Should contain passphrase header
-        assert "PASS_WEB_SEARCH" in str(result)
+        assert "[improved-webtools diagnostic] ID: improved-webtools/websearch" in str(result)
+        assert "https://github.com/dzackgarza/improved-webtools/issues" in str(result)
 
     @pytest.mark.parametrize(
         "num_results,expected_range",
