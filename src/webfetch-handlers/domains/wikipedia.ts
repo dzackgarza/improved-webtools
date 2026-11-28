@@ -36,7 +36,10 @@ function decodeBasicHtmlEntities(text: string): string {
     .replaceAll("&nbsp;", " ");
 }
 
-function parseWikipediaDisplayTitle(input: { displayTitle?: string; fallbackTitle: string }): string {
+function parseWikipediaDisplayTitle(input: {
+  displayTitle?: string;
+  fallbackTitle: string;
+}): string {
   const candidate = (input.displayTitle ?? "").trim() || input.fallbackTitle;
   const noTags = candidate.replaceAll(/<[^>]+>/g, "");
   const decoded = decodeBasicHtmlEntities(noTags);
@@ -83,7 +86,9 @@ async function convertWikipediaHtmlToMarkdown(input: {
       input.convertTimeoutMs,
     );
     if (convert.exitCode !== 0) {
-      throw new Error(`wikipedia markdown conversion failed (exit ${convert.exitCode}): ${convert.stderrText.trim()}`);
+      throw new Error(
+        `wikipedia markdown conversion failed (exit ${convert.exitCode}): ${convert.stderrText.trim()}`,
+      );
     }
     const markdown = convert.stdoutText.trim();
     if (!markdown) {
@@ -104,7 +109,9 @@ export async function fetchWikipediaMarkdown(input: {
 }): Promise<WebFetchHandlerResult> {
   const title = extractWikipediaTitle(input.url);
   if (!title) {
-    throw new Error("unsupported wikipedia URL shape: expected /wiki/<title> or /w/index.php?title=<title>");
+    throw new Error(
+      "unsupported wikipedia URL shape: expected /wiki/<title> or /w/index.php?title=<title>",
+    );
   }
 
   const apiUrl = new URL(`${input.url.protocol}//${input.url.host}/w/api.php`);
@@ -126,7 +133,9 @@ export async function fetchWikipediaMarkdown(input: {
 
   const payload = (await response.json()) as WikipediaParseApiResponse;
   if (payload.error) {
-    throw new Error(`wikipedia parse API error (${payload.error.code ?? "unknown"}): ${payload.error.info ?? "unknown error"}`);
+    throw new Error(
+      `wikipedia parse API error (${payload.error.code ?? "unknown"}): ${payload.error.info ?? "unknown error"}`,
+    );
   }
 
   const html = payload.parse?.text;

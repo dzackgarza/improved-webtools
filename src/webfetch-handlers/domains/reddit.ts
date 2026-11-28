@@ -2,7 +2,12 @@ import { strict as assert } from "node:assert";
 import { z } from "zod";
 import type { WebFetchHandlerResult } from "../types.ts";
 
-export const REDDIT_DOMAINS = ["reddit.com", "www.reddit.com", "old.reddit.com", "api.reddit.com"] as const;
+export const REDDIT_DOMAINS = [
+  "reddit.com",
+  "www.reddit.com",
+  "old.reddit.com",
+  "api.reddit.com",
+] as const;
 
 const redditPostPathSchema = z
   .tuple([
@@ -52,10 +57,7 @@ type ArcticShiftMoreNode = {
 };
 
 type ArcticShiftTreeNode = ArcticShiftCommentNode | ArcticShiftMoreNode;
-type HttpFetch = (
-  input: string | URL | Request,
-  init?: RequestInit,
-) => Promise<Response>;
+type HttpFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 const arcticShiftListingSchema: z.ZodType<ArcticShiftListing> = z.lazy(() =>
   z.object({
@@ -137,7 +139,11 @@ function renderRedditCommentTree(
       const comment = node.data;
       const commentId = normalizeRedditId(comment.id);
       const [parentKind, parentId] = redditParentSchema.parse(comment.parent_id.split("_"));
-      assert.equal(parentKind, expectedParentKind, `Reddit comment ${comment.id} has the wrong parent kind.`);
+      assert.equal(
+        parentKind,
+        expectedParentKind,
+        `Reddit comment ${comment.id} has the wrong parent kind.`,
+      );
       assert.equal(
         parentId.toLowerCase(),
         expectedParentId,

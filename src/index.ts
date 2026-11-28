@@ -1,26 +1,26 @@
-import { type Plugin, tool } from "@opencode-ai/plugin";
-import { getEncoding } from "js-tiktoken";
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
+import { type Plugin, tool } from "@opencode-ai/plugin";
+import { getEncoding } from "js-tiktoken";
 import { z } from "zod";
+import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
 import {
+  type CommandExecutionResult,
   fetchArxivLibraryContent,
   fetchGitHubContent,
   fetchRedditPostMarkdown,
-  fetchYoutubeTranscriptMarkdown,
   fetchWikipediaMarkdown,
-  isArxivLibraryUrl,
+  fetchYoutubeTranscriptMarkdown,
   GITHUB_DOMAINS,
   hostMatchesDomain,
+  isArxivLibraryUrl,
   isRedditPostPermalink,
   REDDIT_DOMAINS,
-  type CommandExecutionResult,
   type WebFetchDomainHandler,
   type WebFetchHandlerResult,
   WIKIPEDIA_DOMAINS,
   YOUTUBE_DOMAINS,
 } from "./webfetch-handlers/index.ts";
-import { PASSPHRASE_WEB_SEARCH, PASSPHRASE_WEBFETCH } from "./passphrases.ts";
 
 const searxngResultSchema = z.object({
   title: z.string(),
@@ -32,13 +32,8 @@ const searxngResultSchema = z.object({
 });
 
 const searxngAnswerSchema = z
-  .union([
-    z.string(),
-    z.object({ answer: z.string() }),
-  ])
-  .transform((answer) =>
-    typeof answer === "string" ? answer : answer.answer,
-  );
+  .union([z.string(), z.object({ answer: z.string() })])
+  .transform((answer) => (typeof answer === "string" ? answer : answer.answer));
 
 const searxngResponseSchema = z.object({
   query: z.string(),
@@ -51,13 +46,7 @@ const searxngResponseSchema = z.object({
 
 type SearxngResult = z.infer<typeof searxngResultSchema>;
 type SearxngResponse = z.infer<typeof searxngResponseSchema>;
-type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 type WebFetchCacheMode = "default" | "refresh";
 
@@ -83,7 +72,9 @@ const WEBSEARCH_BASE_DESCRIPTION =
   "Use when you need to search the web. Optional categories for narrowing only: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg. Use offset and num_results to paginate.";
 
 function envFlagEnabled(value?: string): boolean {
-  if (value === undefined) {return false;}
+  if (value === undefined) {
+    return false;
+  }
   const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
@@ -125,7 +116,9 @@ function searxngInstanceUrl(): string | undefined {
 
 function webFetchCacheEnabled(): boolean {
   const value = process.env.WEBFETCH_CACHE_ENABLED?.trim();
-  if (value === undefined) {return false;}
+  if (value === undefined) {
+    return false;
+  }
   assert.ok(value === "0" || value === "1", "WEBFETCH_CACHE_ENABLED must be 0 or 1.");
   return value === "1";
 }
@@ -158,12 +151,16 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 function parseLimit(limit?: number): number {
-  if (!Number.isFinite(limit)) {return DEFAULT_LIMIT;}
+  if (!Number.isFinite(limit)) {
+    return DEFAULT_LIMIT;
+  }
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit ?? DEFAULT_LIMIT)));
 }
 
 function resolveOffset(offset?: number): { value: number; error?: string } {
-  if (offset === undefined) {return { value: 0 };}
+  if (offset === undefined) {
+    return { value: 0 };
+  }
   if (!Number.isFinite(offset) || !Number.isInteger(offset) || offset < 0) {
     return {
       value: 0,
@@ -181,7 +178,9 @@ function resolveOffset(offset?: number): { value: number; error?: string } {
 
 function clampSnippet(text: string, maxLen = 280): string {
   const clean = text.trim().replace(/\s+/g, " ");
-  if (clean.length <= maxLen) {return clean;}
+  if (clean.length <= maxLen) {
+    return clean;
+  }
   return `${clean.slice(0, maxLen - 1)}…`;
 }
 
@@ -216,11 +215,17 @@ async function readWebFetchCache(
   url: string,
   overwriteCache: WebFetchCacheMode,
 ): Promise<WebFetchHandlerResult | undefined> {
-  if (!webFetchCacheEnabled()) {return undefined;}
-  if (overwriteCache === "refresh") {return undefined;}
+  if (!webFetchCacheEnabled()) {
+    return undefined;
+  }
+  if (overwriteCache === "refresh") {
+    return undefined;
+  }
   const path = webFetchCachePath(url);
   const file = Bun.file(path);
-  if (!(await file.exists())) {return undefined;}
+  if (!(await file.exists())) {
+    return undefined;
+  }
   try {
     const raw = await file.text();
     const parsed = JSON.parse(raw) as Partial<WebFetchCachePayload>;
@@ -248,14 +253,19 @@ async function readWebFetchCache(
   }
 }
 
-async function writeWebFetchCache(
-  url: string,
-  result: WebFetchHandlerResult,
-): Promise<void> {
-  if (!webFetchCacheEnabled()) {return;}
-  if (result.routeName.includes("/binary")) {return;}
-  if (result.routeName.startsWith("arxiv/library")) {return;}
-  if (!result.content.trim()) {return;}
+async function writeWebFetchCache(url: string, result: WebFetchHandlerResult): Promise<void> {
+  if (!webFetchCacheEnabled()) {
+    return;
+  }
+  if (result.routeName.includes("/binary")) {
+    return;
+  }
+  if (result.routeName.startsWith("arxiv/library")) {
+    return;
+  }
+  if (!result.content.trim()) {
+    return;
+  }
   await Bun.$`mkdir -p ${webFetchCacheDir()}`.quiet();
   const payload: WebFetchCachePayload = {
     url,
@@ -271,9 +281,10 @@ function findWebFetchHandler(
   handlers: readonly WebFetchDomainHandler[],
   url: URL,
 ): WebFetchDomainHandler | undefined {
-  return handlers.find((handler) =>
-    handler.domains.some((domain) => hostMatchesDomain(url.hostname, domain)) &&
-    (handler.supports === undefined || handler.supports(url)),
+  return handlers.find(
+    (handler) =>
+      handler.domains.some((domain) => hostMatchesDomain(url.hostname, domain)) &&
+      (handler.supports === undefined || handler.supports(url)),
   );
 }
 
@@ -315,7 +326,9 @@ async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
     "-lc",
     `curl -sSIL --compressed --max-time 30 ${JSON.stringify(url.toString())}`,
   ]);
-  if (result.exitCode !== 0) {return {};}
+  if (result.exitCode !== 0) {
+    return {};
+  }
 
   const headerBlocks = result.stdoutText
     .split(/\r?\n\r?\n/g)
@@ -326,11 +339,12 @@ async function fetchHttpMetadata(url: URL): Promise<HttpMetadata> {
   const rawTrimmed = result.stdoutText.trim();
 
   const statusLine = lines.find((line) => /^HTTP\/\d+(?:\.\d+)?\s+\d{3}\b/i.test(line));
-  const statusCode = statusLine !== undefined
-    ? Number.parseInt(statusLine.replace(/^HTTP\/\d+(?:\.\d+)?\s+/, "").slice(0, 3), 10)
-    : /^\d{3}$/.test(rawTrimmed)
-      ? Number.parseInt(rawTrimmed, 10)
-      : undefined;
+  const statusCode =
+    statusLine !== undefined
+      ? Number.parseInt(statusLine.replace(/^HTTP\/\d+(?:\.\d+)?\s+/, "").slice(0, 3), 10)
+      : /^\d{3}$/.test(rawTrimmed)
+        ? Number.parseInt(rawTrimmed, 10)
+        : undefined;
   const contentTypeHeader = lines.find((line) => /^content-type:/i.test(line));
   const contentLengthHeader = lines.find((line) => /^content-length:/i.test(line));
   const contentType = contentTypeHeader?.replace(/^content-type:\s*/i, "").trim();
@@ -372,7 +386,9 @@ function formatArxivServiceMessage(input: {
   statusCode?: number;
   content: string;
 }): string | undefined {
-  if (!hostMatchesDomain(input.url.hostname, "arxiv.org")) {return undefined;}
+  if (!hostMatchesDomain(input.url.hostname, "arxiv.org")) {
+    return undefined;
+  }
   const body = input.content.trim().toLowerCase();
 
   if (input.statusCode === 429 || body === "rate exceeded." || body === "rate exceeded") {
@@ -397,8 +413,12 @@ function formatArxivServiceMessage(input: {
 }
 
 function buildArxivFallbackUrl(url: URL): URL | undefined {
-  if (!hostMatchesDomain(url.hostname, "arxiv.org")) {return undefined;}
-  if (url.pathname !== "/api/query") {return undefined;}
+  if (!hostMatchesDomain(url.hostname, "arxiv.org")) {
+    return undefined;
+  }
+  if (url.pathname !== "/api/query") {
+    return undefined;
+  }
 
   const rawIdList = (url.searchParams.get("id_list") ?? "").trim();
   if (rawIdList.length > 0) {
@@ -474,21 +494,31 @@ async function formatWebFetchOutput(input: {
 }
 
 function augmentQueryWithDomains(query: string, domains: string[]): string {
-  if (domains.length === 0) {return query;}
-  // `site:` is query syntax forwarded to engines; behavior depends on engine support.
+  if (domains.length === 0) {
+    return query;
+  }
   const siteClauses = domains.map((domain) => `site:${domain}`);
   return `${query} (${siteClauses.join(" OR ")})`;
 }
 
 function mapRecencyToTimeRange(recency?: number): string | undefined {
-  if (recency === undefined || !Number.isFinite(recency)) {return undefined;}
+  if (recency === undefined || !Number.isFinite(recency)) {
+    return undefined;
+  }
   const days = Math.max(0, Math.floor(recency));
-  if (days <= 1) {return "day";}
-  if (days <= 31) {return "month";}
+  if (days <= 1) {
+    return "day";
+  }
+  if (days <= 31) {
+    return "month";
+  }
   return "year";
 }
 
-function buildQueryUrl(baseUrl: string, args: { query: string; timeRange?: string; pageNumber?: number }): URL {
+function buildQueryUrl(
+  baseUrl: string,
+  args: { query: string; timeRange?: string; pageNumber?: number },
+): URL {
   const url = new URL(`${normalizeBaseUrl(baseUrl)}/search`);
   url.searchParams.set("q", args.query);
   url.searchParams.set("format", "json");
@@ -508,15 +538,17 @@ function asResponse(input: JsonValue): SearxngResponse {
 }
 
 function resolveCategory(category?: string): { bang?: string; error?: string } {
-  if (category === undefined) {return {};}
+  if (category === undefined) {
+    return {};
+  }
   const raw = category.trim().toLowerCase();
-  if (raw.length === 0) {return {};}
+  if (raw.length === 0) {
+    return {};
+  }
 
   if (raw.startsWith("!")) {
     return {
-      error:
-        `Invalid category: ${JSON.stringify(category)}. ` +
-        "Use bare category names only.",
+      error: `Invalid category: ${JSON.stringify(category)}. ` + "Use bare category names only.",
     };
   }
 
@@ -561,14 +593,21 @@ function formatResults(input: {
   if (top.length === 0) {
     lines.push("No results returned.");
     if (input.response.answers.length > 0) {
-      lines.push(`Answers: ${input.response.answers.map((x) => x.trim()).filter(Boolean).join(" | ")}`);
+      lines.push(
+        `Answers: ${input.response.answers
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .join(" | ")}`,
+      );
     }
     if (input.response.suggestions.length > 0) {
       lines.push(`Suggestions: ${input.response.suggestions.join(", ")}`);
     }
     lines.push("");
     lines.push("Continuation hints:");
-    lines.push("- Snippets are truncated. Use webfetch on a selected URL to read full page contents.");
+    lines.push(
+      "- Snippets are truncated. Use webfetch on a selected URL to read full page contents.",
+    );
     lines.push(`- To continue pagination, rerun with offset ${input.offset + input.limit}.`);
     return lines.join("\n");
   }
@@ -594,7 +633,9 @@ function formatResults(input: {
 
   lines.push("");
   lines.push("Continuation hints:");
-  lines.push("- Snippets are truncated. Use webfetch on a selected URL to read full page contents.");
+  lines.push(
+    "- Snippets are truncated. Use webfetch on a selected URL to read full page contents.",
+  );
   lines.push(`- To continue pagination, rerun with offset ${input.offset + top.length}.`);
 
   return lines.join("\n");
@@ -694,9 +735,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
       const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
       const signal = AbortSignal.any([context.abort, timeoutSignal]);
 
-      const domains = (args.domains ?? [])
-        .map((domain) => domain.trim())
-        .filter(Boolean);
+      const domains = (args.domains ?? []).map((domain) => domain.trim()).filter(Boolean);
 
       const category = resolveCategory(args.category);
       if (category.error !== undefined) {
@@ -727,11 +766,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
         const collected: SearxngResult[] = [];
         let firstResponse: SearxngResponse | undefined;
 
-        for (
-          let page = 1;
-          page <= MAX_PAGE_FETCHES && collected.length < neededCount;
-          page += 1
-        ) {
+        for (let page = 1; page <= MAX_PAGE_FETCHES && collected.length < neededCount; page += 1) {
           const url = buildQueryUrl(baseUrl, {
             query: effectiveQuery,
             timeRange,
@@ -766,9 +801,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
             throw new Error(`search request failed (HTTP ${response.status})`);
           }
 
-          const pageData = asResponse(
-            z.json().parse(JSON.parse(await response.text())),
-          );
+          const pageData = asResponse(z.json().parse(JSON.parse(await response.text())));
           if (!firstResponse) {
             firstResponse = pageData;
           }
@@ -895,77 +928,77 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                 })
               : handler
                 ? await handler.handle({ url: parsed })
-              : await (async () => {
-                  const httpMetadata = await fetchHttpMetadata(parsed);
-                  if (isPdfContentType(httpMetadata.contentType)) {
-                    const downloadResult = await downloadPdfToTemp(parsed);
-                    if (downloadResult.exitCode !== 0) {
+                : await (async () => {
+                    const httpMetadata = await fetchHttpMetadata(parsed);
+                    if (isPdfContentType(httpMetadata.contentType)) {
+                      const downloadResult = await downloadPdfToTemp(parsed);
+                      if (downloadResult.exitCode !== 0) {
+                        throw new Error(
+                          `pdf webfetch failed (exit ${downloadResult.exitCode}): ${downloadResult.stderrText.trim()}`,
+                        );
+                      }
+                      const savedPath = downloadResult.stdoutText.trim();
+                      const details = [
+                        `Binary content detected: ${httpMetadata.contentType}.`,
+                        `Saved PDF: ${savedPath}`,
+                      ];
+                      if (httpMetadata.contentLength !== undefined) {
+                        details.push(`Content-Length: ${httpMetadata.contentLength} bytes`);
+                      }
+                      details.push(
+                        "PDF responses are downloaded directly to a temporary directory instead of being piped through w3m.",
+                      );
+                      details.push("Use your normal file-reading tools on the saved file.");
+                      return {
+                        routeName: "default/binary-pdf",
+                        sourceUrl: parsed.toString(),
+                        content: details.join("\n"),
+                      };
+                    }
+                    const defaultResult = await fetchWebContentWithW3M(parsed);
+                    if (defaultResult.exitCode !== 0) {
                       throw new Error(
-                        `pdf webfetch failed (exit ${downloadResult.exitCode}): ${downloadResult.stderrText.trim()}`,
+                        `default webfetch failed (exit ${defaultResult.exitCode}): ${defaultResult.stderrText.trim()}`,
                       );
                     }
-                    const savedPath = downloadResult.stdoutText.trim();
-                    const details = [
-                      `Binary content detected: ${httpMetadata.contentType}.`,
-                      `Saved PDF: ${savedPath}`,
-                    ];
-                    if (httpMetadata.contentLength !== undefined) {
-                      details.push(`Content-Length: ${httpMetadata.contentLength} bytes`);
-                    }
-                    details.push(
-                      "PDF responses are downloaded directly to a temporary directory instead of being piped through w3m.",
-                    );
-                    details.push("Use your normal file-reading tools on the saved file.");
-                    return {
-                      routeName: "default/binary-pdf",
-                      sourceUrl: parsed.toString(),
-                      content: details.join("\n"),
-                    };
-                  }
-                  const defaultResult = await fetchWebContentWithW3M(parsed);
-                  if (defaultResult.exitCode !== 0) {
-                    throw new Error(
-                      `default webfetch failed (exit ${defaultResult.exitCode}): ${defaultResult.stderrText.trim()}`,
-                    );
-                  }
-                  const serviceMessage = formatArxivServiceMessage({
-                    url: parsed,
-                    statusCode: httpMetadata.statusCode,
-                    content: defaultResult.stdoutText,
-                  });
-                  if (serviceMessage !== undefined) {
-                    const fallbackUrl = buildArxivFallbackUrl(parsed);
-                    if (fallbackUrl !== undefined) {
-                      const fallbackResult = await fetchWebContentWithW3M(fallbackUrl);
-                      if (
-                        fallbackResult.exitCode === 0 &&
-                        fallbackResult.stdoutText.trim().length > 0 &&
-                        !isLikelyArxivErrorBody(fallbackResult.stdoutText)
-                      ) {
-                        return {
-                          routeName: "default",
-                          sourceUrl: fallbackUrl.toString(),
-                          content: [
-                            serviceMessage,
-                            `Fallback: loaded arXiv web page via w3m from ${fallbackUrl.toString()}.`,
-                            "",
-                            fallbackResult.stdoutText,
-                          ].join("\n"),
-                        };
+                    const serviceMessage = formatArxivServiceMessage({
+                      url: parsed,
+                      statusCode: httpMetadata.statusCode,
+                      content: defaultResult.stdoutText,
+                    });
+                    if (serviceMessage !== undefined) {
+                      const fallbackUrl = buildArxivFallbackUrl(parsed);
+                      if (fallbackUrl !== undefined) {
+                        const fallbackResult = await fetchWebContentWithW3M(fallbackUrl);
+                        if (
+                          fallbackResult.exitCode === 0 &&
+                          fallbackResult.stdoutText.trim().length > 0 &&
+                          !isLikelyArxivErrorBody(fallbackResult.stdoutText)
+                        ) {
+                          return {
+                            routeName: "default",
+                            sourceUrl: fallbackUrl.toString(),
+                            content: [
+                              serviceMessage,
+                              `Fallback: loaded arXiv web page via w3m from ${fallbackUrl.toString()}.`,
+                              "",
+                              fallbackResult.stdoutText,
+                            ].join("\n"),
+                          };
+                        }
                       }
+                      return {
+                        routeName: "default",
+                        sourceUrl: parsed.toString(),
+                        content: serviceMessage,
+                      };
                     }
                     return {
                       routeName: "default",
                       sourceUrl: parsed.toString(),
-                      content: serviceMessage,
+                      content: defaultResult.stdoutText,
                     };
-                  }
-                  return {
-                    routeName: "default",
-                    sourceUrl: parsed.toString(),
-                    content: defaultResult.stdoutText,
-                  };
-                })();
+                  })();
             await writeWebFetchCache(cacheKey, fetched);
 
             return formatWebFetchOutput({

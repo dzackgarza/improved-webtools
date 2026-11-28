@@ -23,11 +23,7 @@ export const YTDLP_ARGS = [
 
 function buildYtDlpCommand(extraArgs: string[]): string[] {
   const cookiesFile = (process.env.YTDLP_COOKIES_FILE ?? "").trim();
-  return [
-    ...YTDLP_ARGS,
-    ...(cookiesFile ? ["--cookies", cookiesFile] : []),
-    ...extraArgs,
-  ];
+  return [...YTDLP_ARGS, ...(cookiesFile ? ["--cookies", cookiesFile] : []), ...extraArgs];
 }
 
 function normalizeYoutubeUrl(url: URL): URL {
@@ -93,7 +89,9 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
   const sourceUrl = normalizeYoutubeUrl(input.url);
   const tempDir = (await Bun.$`mktemp -d /tmp/webfetch-youtube-XXXXXX`.text()).trim();
   try {
-    const listSubs = await input.runCommand(buildYtDlpCommand(["--list-subs", sourceUrl.toString()]));
+    const listSubs = await input.runCommand(
+      buildYtDlpCommand(["--list-subs", sourceUrl.toString()]),
+    );
     if (listSubs.exitCode !== 0) {
       return {
         routeName: "youtube",
@@ -114,20 +112,23 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
     }
 
     const outputTemplate = `${tempDir}/%(id)s.%(ext)s`;
-    const subtitleDownload = await input.runCommand(buildYtDlpCommand([
-      "--skip-download",
-      "--write-subs",
-      "--write-auto-subs",
-      "--sub-langs",
-      "en,en-orig",
-      "--sub-format",
-      "vtt",
-      "-o",
-      outputTemplate,
-      sourceUrl.toString(),
-    ]));
+    const subtitleDownload = await input.runCommand(
+      buildYtDlpCommand([
+        "--skip-download",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs",
+        "en,en-orig",
+        "--sub-format",
+        "vtt",
+        "-o",
+        outputTemplate,
+        sourceUrl.toString(),
+      ]),
+    );
 
-    const subtitlePath = subtitleDownload.exitCode === 0 ? await pickTranscriptFile(tempDir) : undefined;
+    const subtitlePath =
+      subtitleDownload.exitCode === 0 ? await pickTranscriptFile(tempDir) : undefined;
     if (subtitlePath && subtitlePath.endsWith(".vtt")) {
       const subtitleRaw = await Bun.file(subtitlePath).text();
       const transcript = vttToPlainText(subtitleRaw).trim();
@@ -149,14 +150,16 @@ export async function fetchYoutubeTranscriptMarkdown(input: {
       }
     }
 
-    const audioDownload = await input.runCommand(buildYtDlpCommand([
-      "-x",
-      "--audio-format",
-      "mp3",
-      "-o",
-      outputTemplate,
-      sourceUrl.toString(),
-    ]));
+    const audioDownload = await input.runCommand(
+      buildYtDlpCommand([
+        "-x",
+        "--audio-format",
+        "mp3",
+        "-o",
+        outputTemplate,
+        sourceUrl.toString(),
+      ]),
+    );
     if (audioDownload.exitCode !== 0) {
       return {
         routeName: "youtube",

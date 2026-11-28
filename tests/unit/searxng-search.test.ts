@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ToolContext } from "@opencode-ai/plugin";
 import { createOpencodeClient } from "@opencode-ai/sdk";
@@ -16,17 +16,25 @@ type MockContext = ToolContext & {
   metadatas: MetadataInput[];
 };
 
-const searchPageSchema = z.object({
-  results: z.array(
-    z.object({
-      url: z.string(),
-    }).passthrough(),
-  ),
-}).passthrough();
+const searchPageSchema = z
+  .object({
+    results: z.array(
+      z
+        .object({
+          url: z.string(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
 
 function inputUrl(input: string | Request | URL): string {
-  if (typeof input === "string") {return input;}
-  if (input instanceof URL) {return input.href;}
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
   return input.url;
 }
 
@@ -129,38 +137,42 @@ describe("searxng-search plugin", () => {
     globalThis.fetch = originalFetch;
     Reflect.set(Bun, "spawn", originalSpawn);
     Reflect.set(Bun, "write", originalWrite);
-    if (originalSearxngUrl === undefined)
-      {delete process.env.SEARXNG_INSTANCE_URL;}
-    else {process.env.SEARXNG_INSTANCE_URL = originalSearxngUrl;}
-    if (originalCacheEnabled === undefined)
-      {delete process.env.WEBFETCH_CACHE_ENABLED;}
-    else {process.env.WEBFETCH_CACHE_ENABLED = originalCacheEnabled;}
-    if (originalCacheDir === undefined) {delete process.env.WEBFETCH_CACHE_DIR;}
-    else {process.env.WEBFETCH_CACHE_DIR = originalCacheDir;}
-    if (originalCacheTtlDays === undefined)
-      {delete process.env.WEBFETCH_CACHE_TTL_DAYS;}
-    else {process.env.WEBFETCH_CACHE_TTL_DAYS = originalCacheTtlDays;}
-    if (originalArxivLibraryDir === undefined)
-      {delete process.env.WEBFETCH_ARXIV_LIBRARY_DIR;}
-    else {process.env.WEBFETCH_ARXIV_LIBRARY_DIR = originalArxivLibraryDir;}
+    if (originalSearxngUrl === undefined) {
+      delete process.env.SEARXNG_INSTANCE_URL;
+    } else {
+      process.env.SEARXNG_INSTANCE_URL = originalSearxngUrl;
+    }
+    if (originalCacheEnabled === undefined) {
+      delete process.env.WEBFETCH_CACHE_ENABLED;
+    } else {
+      process.env.WEBFETCH_CACHE_ENABLED = originalCacheEnabled;
+    }
+    if (originalCacheDir === undefined) {
+      delete process.env.WEBFETCH_CACHE_DIR;
+    } else {
+      process.env.WEBFETCH_CACHE_DIR = originalCacheDir;
+    }
+    if (originalCacheTtlDays === undefined) {
+      delete process.env.WEBFETCH_CACHE_TTL_DAYS;
+    } else {
+      process.env.WEBFETCH_CACHE_TTL_DAYS = originalCacheTtlDays;
+    }
+    if (originalArxivLibraryDir === undefined) {
+      delete process.env.WEBFETCH_ARXIV_LIBRARY_DIR;
+    } else {
+      process.env.WEBFETCH_ARXIV_LIBRARY_DIR = originalArxivLibraryDir;
+    }
   });
 
   it("formats websearch results with pagination", async () => {
-    const pageOpenAI1 = searchPageSchema.parse(
-      fixtureJson("searxng/openai-page1.json"),
-    );
-    const pageOpenAI2 = searchPageSchema.parse(
-      fixtureJson("searxng/openai-page2.json"),
-    );
+    const pageOpenAI1 = searchPageSchema.parse(fixtureJson("searxng/openai-page1.json"));
+    const pageOpenAI2 = searchPageSchema.parse(fixtureJson("searxng/openai-page2.json"));
     const responses = new Map<string, z.infer<typeof searchPageSchema>>([
       ["openai|1", pageOpenAI1],
       ["openai|2", pageOpenAI2],
     ]);
 
-    const openAiExpectedWindow = [
-      ...pageOpenAI1.results,
-      ...pageOpenAI2.results,
-    ].slice(1, 3);
+    const openAiExpectedWindow = [...pageOpenAI1.results, ...pageOpenAI2.results].slice(1, 3);
 
     Reflect.set(globalThis, "fetch", async (input: string | Request | URL) => {
       const url = new URL(inputUrl(input));
@@ -169,10 +181,7 @@ describe("searxng-search plugin", () => {
       const key = `${q}|${page}`;
       const body = responses.get(key);
       if (body === undefined) {
-        return new Response(
-          JSON.stringify({ error: `unexpected key ${key}` }),
-          { status: 500 },
-        );
+        return new Response(JSON.stringify({ error: `unexpected key ${key}` }), { status: 500 });
       }
       return new Response(JSON.stringify(body), {
         status: 200,
@@ -210,27 +219,29 @@ describe("searxng-search plugin", () => {
       },
     });
 
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
-    );
+    expect(output).toContain("Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F");
     expect(output).toContain("Showing results: 2-3 of 0");
     expect(output).toContain(openAiExpectedWindow[0]?.url ?? "");
     expect(output).toContain(openAiExpectedWindow[1]?.url ?? "");
   });
 
   it("returns validation errors for invalid category and offset", async () => {
-    Reflect.set(globalThis, "fetch", async () =>
-      new Response(
-        JSON.stringify({
-          query: "unused",
-          number_of_results: 0,
-          results: [],
-          answers: [],
-          suggestions: [],
-          unresponsive_engines: [],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ));
+    Reflect.set(
+      globalThis,
+      "fetch",
+      async () =>
+        new Response(
+          JSON.stringify({
+            query: "unused",
+            number_of_results: 0,
+            results: [],
+            answers: [],
+            suggestions: [],
+            unresponsive_engines: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
 
     const { websearch } = await loadPlugin("http://localhost/searxng");
     const context = buildContext();
@@ -243,9 +254,7 @@ describe("searxng-search plugin", () => {
       context,
     );
 
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F",
-    );
+    expect(output).toContain("Tool passphrase: PASS_WEB_SEARCH_SHADOW_20260305_6A9F");
     expect(output).toContain(`Invalid category: "invalid_category".`);
     expect(output).toContain(
       "Allowed categories: news, it, npm, pypi, st, gh, hf, ollama, hn, science, arx, cr, gos, se, aa, lg.",
@@ -291,9 +300,7 @@ describe("searxng-search plugin", () => {
     expect(context.metadatas[0]?.title).toBe("Web fetch: example.com/big");
 
     expect(writes).toHaveLength(2);
-    const oversizedWrite = writes.find((item) =>
-      item.path.startsWith("/tmp/webfetch-"),
-    );
+    const oversizedWrite = writes.find((item) => item.path.startsWith("/tmp/webfetch-"));
     const cacheWrite = writes.find((item) => item.path.endsWith(".json"));
     expect(oversizedWrite).toBeDefined();
     expect(cacheWrite).toBeDefined();
@@ -301,18 +308,12 @@ describe("searxng-search plugin", () => {
       "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
     );
     expect(oversizedWrite!.content).toContain(`Route: default`);
-    expect(oversizedWrite!.content).toContain(
-      "Source URL: https://example.com/big",
-    );
+    expect(oversizedWrite!.content).toContain("Source URL: https://example.com/big");
     expect(oversizedWrite!.content).toContain(largePrefix);
 
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
+    expect(output).toContain("Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2");
     expect(output).toContain("Route: default");
-    expect(output).toContain(
-      "Full report exceeds inline limit (20000 tokens).",
-    );
+    expect(output).toContain("Full report exceeds inline limit (20000 tokens).");
     expect(output).toContain(`Saved full content: ${oversizedWrite!.path}`);
     expect(output).toContain("Token count:");
   });
@@ -327,12 +328,7 @@ describe("searxng-search plugin", () => {
       if (script.includes("curl -sSIL")) {
         return {
           stdout: streamFromText(
-            [
-              "HTTP/2 200",
-              "content-type: application/pdf",
-              "content-length: 13264",
-              "",
-            ].join("\n"),
+            ["HTTP/2 200", "content-type: application/pdf", "content-length: 13264", ""].join("\n"),
           ),
           stderr: streamFromText(""),
           exited: Promise.resolve(0),
@@ -369,13 +365,9 @@ describe("searxng-search plugin", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]?.[2]).toContain("curl -sSIL");
     expect(calls[1]?.[2]).toContain('curl -sSL --compressed --max-time 30 -o "$outfile"');
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
+    expect(output).toContain("Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2");
     expect(output).toContain("Route: default/binary-pdf");
-    expect(output).toContain(
-      "Binary content detected: application/pdf.",
-    );
+    expect(output).toContain("Binary content detected: application/pdf.");
     expect(output).toContain("Saved PDF: /tmp/webfetch-pdf-abcd12/document.pdf");
     expect(output).toContain("Content-Length: 13264 bytes");
   });
@@ -385,11 +377,7 @@ describe("searxng-search plugin", () => {
     const vtt = fixtureText("youtube/dQw4w9WgXcQ.en.vtt");
 
     Reflect.set(Bun, "spawn", (args: string[]) => {
-      if (
-        args[0] === "uvx" &&
-        args.includes("yt-dlp") &&
-        args.includes("--list-subs")
-      ) {
+      if (args[0] === "uvx" && args.includes("yt-dlp") && args.includes("--list-subs")) {
         return {
           stdout: streamFromText(listSubs),
           stderr: streamFromText(""),
@@ -397,11 +385,7 @@ describe("searxng-search plugin", () => {
         };
       }
 
-      if (
-        args[0] === "uvx" &&
-        args.includes("yt-dlp") &&
-        args.includes("--write-subs")
-      ) {
+      if (args[0] === "uvx" && args.includes("yt-dlp") && args.includes("--write-subs")) {
         const outputIndex = args.indexOf("-o");
         const template = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
         if (template !== undefined) {
@@ -410,12 +394,8 @@ describe("searxng-search plugin", () => {
           writeFileSync(join(dir, "dQw4w9WgXcQ.en.vtt"), vtt);
         }
         return {
-          stdout: streamFromText(
-            fixtureText("youtube/dQw4w9WgXcQ.write-subs.out"),
-          ),
-          stderr: streamFromText(
-            fixtureText("youtube/dQw4w9WgXcQ.write-subs.err"),
-          ),
+          stdout: streamFromText(fixtureText("youtube/dQw4w9WgXcQ.write-subs.out")),
+          stderr: streamFromText(fixtureText("youtube/dQw4w9WgXcQ.write-subs.err")),
           exited: Promise.resolve(0),
         };
       }
@@ -433,9 +413,7 @@ describe("searxng-search plugin", () => {
       context,
     );
 
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
+    expect(output).toContain("Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2");
     expect(output).toContain("Route: youtube");
     expect(output).toContain("# YouTube Transcript");
     expect(output).toContain("We're no strangers to");
@@ -469,9 +447,7 @@ describe("searxng-search plugin", () => {
       context,
     );
 
-    expect(output).toContain(
-      "Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2",
-    );
+    expect(output).toContain("Tool passphrase: PASS_WEBFETCH_SHADOW_20260305_C3D2");
     expect(output).toContain("Route: wikipedia");
     expect(output).toContain("# Fourier transform");
   });
@@ -532,7 +508,9 @@ describe("searxng-search plugin", () => {
         const command = args[2] ?? "";
         if (command.includes("curl -sSIL")) {
           return {
-            stdout: streamFromText("HTTP/2 200\r\ncontent-type: text/html\r\ncontent-length: 18\r\n"),
+            stdout: streamFromText(
+              "HTTP/2 200\r\ncontent-type: text/html\r\ncontent-length: 18\r\n",
+            ),
             stderr: streamFromText(""),
             exited: Promise.resolve(0),
           };
@@ -599,7 +577,8 @@ describe("searxng-search plugin", () => {
     try {
       Reflect.set(globalThis, "fetch", async (input: string | Request | URL) => {
         if (inputUrl(input).includes("/api/query")) {
-          return new Response(`<?xml version="1.0" encoding="UTF-8"?>
+          return new Response(
+            `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
   <entry>
     <id>http://arxiv.org/abs/2401.12345v3</id>
@@ -610,7 +589,9 @@ describe("searxng-search plugin", () => {
     <summary>This article investigates signal estimation in wireless transmission.</summary>
     <category term="eess.SP"/>
   </entry>
-</feed>`, { status: 200 });
+</feed>`,
+            { status: 200 },
+          );
         }
         return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
       });
@@ -620,10 +601,17 @@ describe("searxng-search plugin", () => {
           const outputIndex = args.indexOf("--output");
           const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
           if (outputPath !== undefined) {
-            writeFileSync(outputPath, args.includes("--to=gfm") ? "# arxiv markdown\n" : "<html></html>\n");
+            writeFileSync(
+              outputPath,
+              args.includes("--to=gfm") ? "# arxiv markdown\n" : "<html></html>\n",
+            );
           }
         }
-        return { exited: Promise.resolve(0), stdout: streamFromText(""), stderr: streamFromText("") };
+        return {
+          exited: Promise.resolve(0),
+          stdout: streamFromText(""),
+          stderr: streamFromText(""),
+        };
       });
 
       const { webfetch } = await loadPlugin("http://localhost/searxng", {
