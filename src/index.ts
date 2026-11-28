@@ -14,6 +14,7 @@ import {
   hostMatchesDomain,
   isRedditPostPermalink,
   REDDIT_DOMAINS,
+  RedditCommentTreeUnavailableError,
   type CommandExecutionResult,
   type WebFetchDomainHandler,
   type WebFetchHandlerResult,
@@ -475,7 +476,6 @@ async function formatWebFetchOutput(input: {
 
 function augmentQueryWithDomains(query: string, domains: string[]): string {
   if (domains.length === 0) {return query;}
-  // `site:` is query syntax forwarded to engines; behavior depends on engine support.
   const siteClauses = domains.map((domain) => `site:${domain}`);
   return `${query} (${siteClauses.join(" OR ")})`;
 }
@@ -875,7 +875,8 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
 
           try {
             const resolvedCacheMode = resolveWebFetchCacheMode(args.overwrite_cache);
-            const cacheKey = parsed.toString();
+            const handler = findWebFetchHandler(webFetchDomainHandlers, parsed);
+            const cacheKey = handler?.name === "reddit" ? `reddit-archive-v2:${parsed}` : parsed.toString();
             const useArxivLibrary = isArxivLibraryUrl(parsed);
             const cached = useArxivLibrary
               ? undefined
@@ -887,7 +888,6 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                 content: cached.content,
               });
             }
-            const handler = findWebFetchHandler(webFetchDomainHandlers, parsed);
             const fetched = useArxivLibrary
               ? await fetchArxivLibraryContent({
                   url: parsed,
@@ -986,6 +986,7 @@ export const ImprovedWebSearchPlugin: Plugin = async ({ client }) => {
                 },
               },
             });
+            if (error instanceof RedditCommentTreeUnavailableError) throw error;
             return [
               `Tool passphrase: ${PASSPHRASE_WEBFETCH}`,
               ISSUE_REPORTING_HINT,

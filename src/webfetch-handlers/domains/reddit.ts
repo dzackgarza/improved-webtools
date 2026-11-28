@@ -1,17 +1,17 @@
 import { strict as assert } from "node:assert";
 import { z } from "zod";
-import type { WebFetchHandlerResult } from "../types.ts";
+import { hostMatchesDomain, type WebFetchHandlerResult } from "../types.ts";
 
-export const REDDIT_DOMAINS = ["reddit.com", "www.reddit.com", "old.reddit.com", "api.reddit.com"] as const;
+export const REDDIT_DOMAINS = ["reddit.com", "www.reddit.com", "old.reddit.com", "api.reddit.com", "redd.it"] as const;
 
-const redditPostPathSchema = z
-  .tuple([
-    z.literal("r"),
-    z.string().min(1),
-    z.literal("comments"),
-    z.string().regex(/^[a-z0-9]+$/i),
-  ])
+const redditPostIdSchema = z.string().regex(/^[a-z0-9]+$/i);
+const redditSubredditPathSchema = z
+  .tuple([z.literal("r"), z.string().min(1), z.literal("comments"), redditPostIdSchema])
   .rest(z.string());
+const redditCommentsPathSchema = z.tuple([z.literal("comments"), redditPostIdSchema]).rest(z.string());
+const redditShortPathSchema = z.tuple([redditPostIdSchema]);
+
+export class RedditCommentTreeUnavailableError extends Error {}
 
 const arcticShiftPostSchema = z.object({
   id: z.string(),
@@ -94,15 +94,27 @@ const arcticShiftPostResponseSchema = z.object({ data: z.tuple([arcticShiftPostS
 const arcticShiftTreeResponseSchema = z.object({ data: z.array(arcticShiftTreeNodeSchema) });
 const redditParentSchema = z.tuple([z.enum(["t1", "t3"]), z.string().min(1)]);
 
-export function isRedditPostPermalink(url: URL): boolean {
+function redditPostId(url: URL): string | undefined {
   const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
-  return redditPostPathSchema.safeParse(segments).success;
+  if (url.hostname === "redd.it") {
+    const short = redditShortPathSchema.safeParse(segments);
+    return short.success ? short.data[0].toLowerCase() : undefined;
+  }
+  if (!hostMatchesDomain(url.hostname, "reddit.com")) return undefined;
+  const subreddit = redditSubredditPathSchema.safeParse(segments);
+  if (subreddit.success) return subreddit.data[3].toLowerCase();
+  const comments = redditCommentsPathSchema.safeParse(segments);
+  return comments.success ? comments.data[1].toLowerCase() : undefined;
+}
+
+export function isRedditPostPermalink(url: URL): boolean {
+  return redditPostId(url) !== undefined;
 }
 
 function extractRedditPostId(url: URL): string {
-  const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
-  const path = redditPostPathSchema.parse(segments);
-  return path[3].toLowerCase();
+  const postId = redditPostId(url);
+  assert.ok(postId !== undefined, `Not a Reddit post permalink: ${url}`);
+  return postId;
 }
 
 function normalizeRedditId(value: string): string {
@@ -129,7 +141,7 @@ function renderRedditCommentTree(
   ) => {
     for (const node of children) {
       if (node.kind === "more") {
-        assert.fail(
+        throw new RedditCommentTreeUnavailableError(
           `Arctic Shift collapsed ${node.data.children.length} Reddit comments. The complete tree is unavailable.`,
         );
       }
@@ -205,6 +217,11 @@ export async function fetchRedditPostMarkdown(input: {
 
   const permalink = new URL(post.permalink, "https://www.reddit.com").toString();
   const renderedComments = renderRedditCommentTree(commentNodes, postId);
+  if (renderedComments.commentCount < post.num_comments) {
+    throw new RedditCommentTreeUnavailableError(
+      `Arctic Shift returned ${renderedComments.commentCount} of ${post.num_comments} reported Reddit comments. The complete tree is unavailable.`,
+    );
+  }
   const lines: string[] = [
     "# Reddit Post",
     "",
@@ -215,6 +232,7 @@ export async function fetchRedditPostMarkdown(input: {
     `- Score: ${post.score}`,
     `- Comments reported by post: ${post.num_comments}`,
     `- Comments extracted: ${renderedComments.commentCount}`,
+    "- Comment coverage: Arctic Shift archive tree, not verified against the live Reddit thread; reported counts can lag.",
     "",
     "## Title",
     "",

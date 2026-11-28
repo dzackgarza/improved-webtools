@@ -14,12 +14,16 @@ describe("improved-webtools live integration", () => {
     );
   }, 30_000);
 
-  it("fetches the exact Reddit permalink through the plugin webfetch tool", async () => {
-    const output = await executePluginWebFetch(
-      "https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/",
-    );
+  it.each([
+    "https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/",
+    "https://www.reddit.com/comments/1hn44qh",
+    "https://redd.it/1hn44qh",
+  ])("fetches the exact Reddit permalink through the plugin webfetch tool: %s", async (url) => {
+    const output = await executePluginWebFetch(url);
 
     expect(output).toContain(PASSPHRASE_WEBFETCH);
+    expect(output).toContain("Route: reddit");
+    expect(output).toContain("- Permalink: https://www.reddit.com/r/OpenAI/comments/1hn44qh/");
     expect(output).toContain("- Author: u/Thinklikeachef");
     expect(output).toMatch(/^- Comments extracted: [1-9][0-9]*$/m);
     expect(output).toMatch(/^  - u\/[^\n]+ \(score -?[0-9]+\):$/m);

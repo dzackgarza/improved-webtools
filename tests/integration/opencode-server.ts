@@ -51,8 +51,6 @@ export async function listTools(): Promise<ListedTool[]> {
 }
 
 export function resolvedTool(tools: ListedTool[], id: string): ListedTool {
-  // OpenCode resolves duplicate IDs by registry order. The final registration wins.
-  // Reference: https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/tools.ts
   const registeredTool = tools.findLast((candidate) => candidate.id === id);
   if (registeredTool === undefined) {
     throw new Error(`OpenCode did not register ${id}.`);
@@ -93,7 +91,7 @@ export async function executePluginWebFetch(url: string): Promise<string> {
     if (webFetch === undefined) {
       throw new Error("The plugin did not export webfetch.");
     }
-    return webFetch.execute({ url, overwrite_cache: true }, integrationToolContext());
+    return await webFetch.execute({ url, overwrite_cache: true }, integrationToolContext());
   } finally {
     server.close();
   }
