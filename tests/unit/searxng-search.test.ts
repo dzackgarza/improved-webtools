@@ -576,6 +576,48 @@ describe("searxng-search plugin", () => {
     }
   });
 
+  it.each([
+    ["https://redd.it/1hn44qh", "default"],
+    ["https://www.reddit.com/r/OpenAI/comments/1hn44qh/post/", "reddit"],
+  ])("does not reuse pre-fix Reddit cache entries for %s (%s)", async (url, routeName) => {
+    const tempRoot = await mkdtemp("/tmp/opencode-reddit-cache-test-");
+    const cacheDir = join(tempRoot, "cache");
+    const legacyPath = join(cacheDir, `${createHash("sha256").update(url).digest("hex")}.json`);
+    mkdirSync(cacheDir, { recursive: true });
+    const post = fixtureText("reddit/arctic-shift-post-1hn44qh.json").replace('"num_comments": 43', '"num_comments": 2');
+    const tree = fixtureText("reddit/arctic-shift-tree-1hn44qh.json");
+    const requested: string[] = [];
+    try {
+      writeFileSync(legacyPath, JSON.stringify({
+        url, routeName, sourceUrl: url,
+        content: "stale pre-fix page", cachedAt: new Date().toISOString(),
+      }));
+      Reflect.set(globalThis, "fetch", async (input: string | Request | URL) => {
+        const path = inputUrl(input);
+        requested.push(path);
+        if (path === "https://arctic-shift.photon-reddit.com/api/posts/ids?ids=1hn44qh") return new Response(post);
+        if (path === "https://arctic-shift.photon-reddit.com/api/comments/tree?link_id=t3_1hn44qh&limit=25000") return new Response(tree);
+        throw new Error(`Unexpected request: ${path}`);
+      });
+      const { webfetch } = await loadPlugin("http://localhost/searxng", {
+        webfetchCacheEnabled: "1", webfetchCacheDir: cacheDir, webfetchCacheTtlDays: "90",
+      });
+      const context = buildContext();
+      const first = await webfetch.execute({ url }, context);
+      expect(first).toContain("Route: reddit\n");
+      expect(first).toContain("- Comments extracted: 2");
+      expect(first).not.toContain("stale pre-fix page");
+      const second = await webfetch.execute({ url }, context);
+      expect(second).toContain("Route: reddit/cache");
+      expect(requested).toEqual([
+        "https://arctic-shift.photon-reddit.com/api/posts/ids?ids=1hn44qh",
+        "https://arctic-shift.photon-reddit.com/api/comments/tree?link_id=t3_1hn44qh&limit=25000",
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("bypasses generic webfetch cache for arxiv URLs and builds the local library", async () => {
     const tempRoot = await mkdtemp("/tmp/opencode-webfetch-arxiv-bypass-test-");
     const cacheDir = join(tempRoot, "cache");

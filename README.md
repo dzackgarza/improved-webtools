@@ -143,7 +143,7 @@ just reddit-live-verify
 YTDLP_COOKIES_FILE=/abs/path/to/youtube.cookies just youtube-live-verify
 ```
 
-`just reddit-live-verify` runs the live Reddit handler against Arctic Shift and proves the nested-comment render path.
+`just reddit-live-verify` runs the live Reddit handler against Arctic Shift and proves the nested-comment render path. The plugin resolves subreddit-prefixed post permalinks, `/comments/<post-id>` permalinks, and `redd.it/<post-id>` links by exact ID. It rejects collapsed archive trees and trees containing fewer comments than the archive post reports, propagating the reason as a tool error. A successful response describes the returned Arctic Shift archive tree, not independently verified coverage of the current live Reddit thread (archive counts may lag).
 
 `just youtube-live-verify` preflights `uvx`, `yt-dlp` via `uvx`, and `openai-whisper` via `uvx` before running a caption-backed TED proof, a no-subtitles Whisper proof, and an invalid-video failure check.
 On CPU-only hosts, the Whisper leg can take several minutes; set `YOUTUBE_VERIFY_TIMEOUT_MS` higher if it times out before transcription completes.

@@ -143,8 +143,9 @@ describe("webfetch handler modules", () => {
     }
   });
 
-  it("renders the Arctic Shift comment tree from real response fixtures", async () => {
-    const postFixture = fixtureText("reddit/arctic-shift-post-1hn44qh.json");
+  it("renders the nested Arctic Shift sample with a consistent reported count", async () => {
+    const postFixture = fixtureText("reddit/arctic-shift-post-1hn44qh.json")
+      .replace('"num_comments": 43', '"num_comments": 2');
     const treeFixture = fixtureText("reddit/arctic-shift-tree-1hn44qh.json");
     const requestedUrls: string[] = [];
     const fetchImpl = async (input: string | URL | Request) => {
@@ -169,20 +170,31 @@ describe("webfetch handler modules", () => {
       "https://arctic-shift.photon-reddit.com/api/comments/tree?link_id=t3_1hn44qh&limit=25000",
     ]);
     expect(output.routeName).toBe("reddit");
-    expect(output.content).toContain("- Comments reported by post: 43");
+    expect(output.content).toContain("- Comments reported by post: 2");
+    expect(output.content).toContain("not verified against the live Reddit thread");
     expect(output.content).toContain("- Comments extracted: 2");
     expect(output.content).toContain("- u/AssistanceLeather513 (score -12):");
     expect(output.content).toContain("  - u/indiegameplus (score 10):");
   });
 
   it("selects the Reddit handler only for post permalinks", () => {
-    expect(
-      isRedditPostPermalink(new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/post/")),
-    ).toBe(true);
-    expect(isRedditPostPermalink(new URL("https://www.reddit.com/r/OpenAI"))).toBe(false);
+    for (const url of [
+      "https://www.reddit.com/r/OpenAI/comments/1hn44qh/post/",
+      "https://www.reddit.com/comments/1HN44QH?utm_source=share",
+      "https://old.reddit.com/comments/1hn44qh/post/",
+      "https://redd.it/1hn44qh/",
+    ]) expect(isRedditPostPermalink(new URL(url))).toBe(true);
+    for (const url of [
+      "https://www.reddit.com/r/OpenAI",
+      "https://www.reddit.com/comments/",
+      "https://www.reddit.com/comments/not-an-id",
+      "https://redd.it/",
+      "https://redd.it/1hn44qh/extra",
+      "https://example.org/comments/1hn44qh",
+    ]) expect(isRedditPostPermalink(new URL(url))).toBe(false);
   });
 
-  it("rejects an Arctic Shift tree with collapsed comments", () => {
+  it("rejects an Arctic Shift tree with collapsed comments", async () => {
     const postFixture = fixtureText("reddit/arctic-shift-post-1hn44qh.json");
     const treeFixture = fixtureText("reddit/arctic-shift-tree-collapsed-1hn44qh.json");
     const fetchImpl = async (input: string | URL | Request) => {
@@ -192,7 +204,7 @@ describe("webfetch handler modules", () => {
       });
     };
 
-    expect(
+    await expect(
       fetchRedditPostMarkdown({
         url: new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/post/"),
         fetchImpl,
@@ -278,7 +290,6 @@ describe("webfetch handler modules", () => {
         }
 
         if (args.includes("--write-subs")) {
-          // Simulate no subtitle artifact written, forcing audio+whisper path.
           return { stdoutText: fixtureText("youtube/dQw4w9WgXcQ.write-subs.out"), stderrText: "", exitCode: 0 };
         }
 
