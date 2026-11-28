@@ -1,6 +1,3 @@
-# improved-webtools repository workflows.
-# The central QC implementation lives in ~/ai-review-ci/justfiles/bun.just.
-# Project-specific installation, publishing, and live checks remain local.
 
 ai_review_ci_schema_version := "1"
 ai_review_ci_profile := "bun"
@@ -10,60 +7,64 @@ ai_review_ci_workflow_template_version := "1"
 ai_review_ci_local_delegation := "global-justfile"
 ai_review_ci_default_branch := "main"
 
-# List available recipes.
+[doc("List available recipes.")]
 default:
     @just --list
 
-# Run commit-tier Bun and TypeScript QC.
+[doc("Run commit-tier Bun and TypeScript QC.")]
 test-commit:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-commit
 
-# Run the full Bun test suite before pushing.
+[doc("Run the full Bun test suite before pushing.")]
 test-push:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-push
 
-# Run CI acceptance QC.
+[doc("Run CI acceptance QC.")]
 test-ci:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-ci
 
-# Set up npm trusted publishing manually.
+[doc("Set up npm trusted publishing manually.")]
 setup-npm-trust:
     npm trust github --repository dzackgarza/{{file_stem(justfile_directory())}} --file publish.yml
 
-# Publish from a local machine with 2FA.
+[doc("Publish from a local machine with 2FA.")]
 publish:
     npm publish
 
-# Install all project dependencies.
+[doc("Install all project dependencies.")]
 install: install-ts install-mcp
 
-# Install TypeScript dependencies.
+[doc("Install TypeScript dependencies.")]
 install-ts:
   bun install
 
-# Install MCP server dependencies.
+[doc("Install MCP server dependencies.")]
 install-mcp:
   cd mcp-server && uv sync --dev
 
-# Check TypeScript types.
+[doc("Check TypeScript types.")]
 typecheck:
   bunx tsc --noEmit
 
-# Run TypeScript tests.
+[doc("Run TypeScript tests.")]
 test:
   bun test
 
-# Run MCP server tests.
+[doc("Run MCP server tests.")]
 mcp-test:
   cd mcp-server && uv run pytest
 
-# Run local type and test checks.
+[doc("Run local type and test checks.")]
 check: typecheck test mcp-test
 
-# Verify the live Reddit handler.
+[doc("Verify the live Reddit handler.")]
 reddit-live-verify:
   bun scripts/verify-reddit-live.ts
 
-# Verify the live YouTube handler.
+[doc("Verify the live YouTube handler.")]
 youtube-live-verify:
   bun scripts/verify-youtube-live.ts
+
+[doc("Run the scheduled whole-tree audit (semgrep and debt scans) through the central implementation.")]
+ambient:
+    @just -f ~/ai-review-ci/justfiles/bun.just -d . ambient

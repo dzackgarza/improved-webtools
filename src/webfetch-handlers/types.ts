@@ -4,10 +4,7 @@ export type CommandExecutionResult = {
   exitCode: number;
 };
 
-export type RunCommand = (
-  args: string[],
-  timeoutMs?: number,
-) => Promise<CommandExecutionResult>;
+export type RunCommand = (args: string[], timeoutMs?: number) => Promise<CommandExecutionResult>;
 
 export type WebFetchHandlerInput = {
   url: URL;

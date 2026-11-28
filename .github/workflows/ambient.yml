@@ -1,0 +1,15 @@
+name: Ambient audit
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch: {}
+jobs:
+  ambient:
+    uses: dzackgarza/ai-review-ci/.github/workflows/_qc.yml@main
+    permissions:
+      contents: read
+      issues: read
+    with:
+      tier: ambient
+      profile: 'bun'
+      infra_ref: 'main'

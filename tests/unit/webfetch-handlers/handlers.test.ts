@@ -1,38 +1,43 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { z } from "zod";
-
 import {
+  buildGitHubCommandPlan,
   extractArxivIdFromUrl,
   fetchArxivLibraryContent,
-  buildGitHubCommandPlan,
   fetchGitHubContent,
   fetchRedditPostMarkdown,
   fetchWikipediaMarkdown,
   fetchYoutubeTranscriptMarkdown,
   isRedditPostPermalink,
 } from "@webfetch-handlers";
+import { z } from "zod";
 
 function fixtureText(relativePath: string): string {
   const path = new URL(`../../fixtures/real/${relativePath}`, import.meta.url);
   return readFileSync(path, "utf8");
 }
 
-const githubIssueSchema = z.object({
-  number: z.number(),
-  state: z.string(),
-  title: z.string(),
-  comments: z.array(z.json()),
-}).passthrough();
+const githubIssueSchema = z
+  .object({
+    number: z.number(),
+    state: z.string(),
+    title: z.string(),
+    comments: z.array(z.json()),
+  })
+  .passthrough();
 
 function fixtureJson(relativePath: string): z.infer<ReturnType<typeof z.json>> {
   return z.json().parse(JSON.parse(fixtureText(relativePath)));
 }
 
 function inputUrl(input: string | Request | URL): string {
-  if (typeof input === "string") {return input;}
-  if (input instanceof URL) {return input.href;}
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
   return input.url;
 }
 
@@ -52,7 +57,9 @@ describe("webfetch handler modules", () => {
 
   it("builds github issue plans and fetches via runner with real gh fixture output", async () => {
     const issueFixture = fixtureText("github/issue-14460.json");
-    const plan = buildGitHubCommandPlan(new URL("https://github.com/anomalyco/opencode/issues/8094"));
+    const plan = buildGitHubCommandPlan(
+      new URL("https://github.com/anomalyco/opencode/issues/8094"),
+    );
     expect(plan.args).toEqual([
       "gh",
       "issue",
@@ -160,7 +167,9 @@ describe("webfetch handler modules", () => {
     };
 
     const output = await fetchRedditPostMarkdown({
-      url: new URL("https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/"),
+      url: new URL(
+        "https://www.reddit.com/r/OpenAI/comments/1hn44qh/anyone_else_excited_for_o3_mini_release/",
+      ),
       fetchImpl,
     });
 
@@ -223,7 +232,11 @@ describe("webfetch handler modules", () => {
             await Bun.$`mkdir -p ${dir}`.quiet();
             await Bun.write(`${dir}/dQw4w9WgXcQ.en.vtt`, vtt);
           }
-          return { stdoutText: fixtureText("youtube/dQw4w9WgXcQ.write-subs.out"), stderrText: "", exitCode: 0 };
+          return {
+            stdoutText: fixtureText("youtube/dQw4w9WgXcQ.write-subs.out"),
+            stderrText: "",
+            exitCode: 0,
+          };
         }
 
         return { stdoutText: "", stderrText: "unexpected", exitCode: 1 };
@@ -278,8 +291,11 @@ describe("webfetch handler modules", () => {
         }
 
         if (args.includes("--write-subs")) {
-          // Simulate no subtitle artifact written, forcing audio+whisper path.
-          return { stdoutText: fixtureText("youtube/dQw4w9WgXcQ.write-subs.out"), stderrText: "", exitCode: 0 };
+          return {
+            stdoutText: fixtureText("youtube/dQw4w9WgXcQ.write-subs.out"),
+            stderrText: "",
+            exitCode: 0,
+          };
         }
 
         if (args.includes("-x") && args.includes("--audio-format")) {
@@ -372,8 +388,15 @@ describe("webfetch handler modules", () => {
   it("supports wikipedia index.php title URLs and normalizes source URL", async () => {
     const parseFixture = fixtureJson("wikipedia/parse-wave-equation.json");
     const converted = fixtureText("wikipedia/wave-equation.converted.md");
-    Reflect.set(globalThis, "fetch", async () =>
-      new Response(JSON.stringify(parseFixture), { status: 200, headers: { "content-type": "application/json" } }));
+    Reflect.set(
+      globalThis,
+      "fetch",
+      async () =>
+        new Response(JSON.stringify(parseFixture), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
 
     const output = await fetchWikipediaMarkdown({
       url: new URL("https://en.wikipedia.org/w/index.php?title=Wave_equation"),
@@ -399,7 +422,11 @@ describe("webfetch handler modules", () => {
       url: new URL("https://www.youtube.com/watch?v=8S0FDjFBj8o"),
       runCommand: async (args) => {
         if (args.includes("--list-subs")) {
-          return { stdoutText: fixtureText("youtube/8S0FDjFBj8o.list-subs.out"), stderrText: botCheckError, exitCode: 1 };
+          return {
+            stdoutText: fixtureText("youtube/8S0FDjFBj8o.list-subs.out"),
+            stderrText: botCheckError,
+            exitCode: 1,
+          };
         }
         return { stdoutText: "", stderrText: "", exitCode: 0 };
       },
@@ -448,8 +475,15 @@ describe("webfetch handler modules", () => {
 
   it("throws for wikipedia parse API error payloads from real API fixture", () => {
     const missingPage = fixtureJson("wikipedia/parse-missing-page.json");
-    Reflect.set(globalThis, "fetch", async () =>
-      new Response(JSON.stringify(missingPage), { status: 200, headers: { "content-type": "application/json" } }));
+    Reflect.set(
+      globalThis,
+      "fetch",
+      async () =>
+        new Response(JSON.stringify(missingPage), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
 
     expect(
       fetchWikipediaMarkdown({
@@ -464,12 +498,22 @@ describe("webfetch handler modules", () => {
 
   it("normalizes arxiv IDs across supported URL shapes", () => {
     expect(extractArxivIdFromUrl(new URL("https://arxiv.org/abs/2401.12345v3"))).toBe("2401.12345");
-    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/pdf/2401.12345.pdf"))).toBe("2401.12345");
-    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/src/hep-th/9901001v2"))).toBe("hep-th/9901001");
-    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/abs/math.GT/0309136v1"))).toBe("math.GT/0309136");
-    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/html/2401.12345v1"))).toBe("2401.12345");
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/pdf/2401.12345.pdf"))).toBe(
+      "2401.12345",
+    );
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/src/hep-th/9901001v2"))).toBe(
+      "hep-th/9901001",
+    );
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/abs/math.GT/0309136v1"))).toBe(
+      "math.GT/0309136",
+    );
+    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/html/2401.12345v1"))).toBe(
+      "2401.12345",
+    );
     expect(extractArxivIdFromUrl(new URL("https://example.com/abs/2401.12345"))).toBeUndefined();
-    expect(extractArxivIdFromUrl(new URL("https://arxiv.org/abs/%2e%2e%2f%2e%2e%2ftmp%2fpwn"))).toBeUndefined();
+    expect(
+      extractArxivIdFromUrl(new URL("https://arxiv.org/abs/%2e%2e%2f%2e%2e%2ftmp%2fpwn")),
+    ).toBeUndefined();
   });
 
   it("builds the arxiv local library, records last access, and refreshes on demand", async () => {
@@ -502,9 +546,12 @@ describe("webfetch handler modules", () => {
           return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), { status: 200 });
         }
         if (url.includes("/e-print/2401.12345")) {
-          return new Response("\\documentclass{article}\n\\begin{document}\nHello arXiv.\n\\end{document}\n", {
-            status: 200,
-          });
+          return new Response(
+            "\\documentclass{article}\n\\begin{document}\nHello arXiv.\n\\end{document}\n",
+            {
+              status: 200,
+            },
+          );
         }
         return new Response("unexpected", { status: 404, statusText: "Not Found" });
       },
@@ -518,7 +565,7 @@ describe("webfetch handler modules", () => {
       if (args[0] === "pandoc") {
         const outputIndex = args.indexOf("--output");
         const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : undefined;
-      if (outputPath !== undefined) {
+        if (outputPath !== undefined) {
           const content = args.includes("--to=gfm")
             ? "# Distributionally Robust Receive Combining\n\nHello arXiv.\n"
             : "<html><body><h1>Distributionally Robust Receive Combining</h1></body></html>\n";
@@ -541,9 +588,15 @@ describe("webfetch handler modules", () => {
       expect(first.routeName).toBe("arxiv/library");
       expect(first.content).toContain("Local arXiv library status: built");
       expect(first.content).toContain("Last accessed: 2026-03-09T00:00:00.000Z");
-      expect(first.content).toContain(`Source archive file: ${join(libraryDir, "2401.12345", "2401.12345_source.tar.gz")}`);
-      expect(first.content).toContain(`Markdown file: ${join(libraryDir, "2401.12345", "2401.12345.md")}`);
-      expect(first.content).toContain(`HTML file: ${join(libraryDir, "2401.12345", "2401.12345.html")}`);
+      expect(first.content).toContain(
+        `Source archive file: ${join(libraryDir, "2401.12345", "2401.12345_source.tar.gz")}`,
+      );
+      expect(first.content).toContain(
+        `Markdown file: ${join(libraryDir, "2401.12345", "2401.12345.md")}`,
+      );
+      expect(first.content).toContain(
+        `HTML file: ${join(libraryDir, "2401.12345", "2401.12345.html")}`,
+      );
 
       const paperDir = join(libraryDir, "2401.12345");
       const metadataPath = join(paperDir, "metadata.yaml");
@@ -551,11 +604,19 @@ describe("webfetch handler modules", () => {
       const markdownPath = join(paperDir, "2401.12345.md");
       const htmlPath = join(paperDir, "2401.12345.html");
 
-      expect(readFileSync(metadataPath, "utf8")).toContain('last_accessed_at: "2026-03-09T00:00:00.000Z"');
+      expect(readFileSync(metadataPath, "utf8")).toContain(
+        'last_accessed_at: "2026-03-09T00:00:00.000Z"',
+      );
       expect(readFileSync(metadataPath, "utf8")).toContain("processing_notes:");
-      expect(readFileSync(metadataPath, "utf8")).toContain("Source payload was not a tar archive; wrote raw source bytes to a .tex fallback");
-      expect(readFileSync(summaryPath, "utf8")).toContain("Distributionally Robust Receive Combining");
-      expect(readFileSync(markdownPath, "utf8")).toContain("# Distributionally Robust Receive Combining");
+      expect(readFileSync(metadataPath, "utf8")).toContain(
+        "Source payload was not a tar archive; wrote raw source bytes to a .tex fallback",
+      );
+      expect(readFileSync(summaryPath, "utf8")).toContain(
+        "Distributionally Robust Receive Combining",
+      );
+      expect(readFileSync(markdownPath, "utf8")).toContain(
+        "# Distributionally Robust Receive Combining",
+      );
       expect(readFileSync(htmlPath, "utf8")).toContain("<html>");
 
       const fetchCountAfterBuild = fetchCalls.length;
@@ -572,7 +633,9 @@ describe("webfetch handler modules", () => {
       expect(second.content).toContain("Authors: Alice Example, Bob Example");
       expect(second.content).toContain("Published: 2024-01-22T19:00:00Z");
       expect(fetchCalls.length).toBe(fetchCountAfterBuild);
-      expect(readFileSync(metadataPath, "utf8")).toContain('last_accessed_at: "2026-03-10T00:00:00.000Z"');
+      expect(readFileSync(metadataPath, "utf8")).toContain(
+        'last_accessed_at: "2026-03-10T00:00:00.000Z"',
+      );
 
       const staleFilePath = join(paperDir, "source", "stale.tex");
       writeFileSync(staleFilePath, "stale artifact");
@@ -590,7 +653,9 @@ describe("webfetch handler modules", () => {
       expect(refreshed.content).toContain("Local arXiv library status: refreshed");
       expect(fetchCalls.length).toBeGreaterThan(fetchCountAfterBuild);
       expect(readFileSync(metadataPath, "utf8")).toContain('cache_status: "refreshed"');
-      expect(readFileSync(metadataPath, "utf8")).toContain('last_accessed_at: "2026-03-11T00:00:00.000Z"');
+      expect(readFileSync(metadataPath, "utf8")).toContain(
+        'last_accessed_at: "2026-03-11T00:00:00.000Z"',
+      );
       expect(existsSync(staleFilePath)).toBe(false);
     } finally {
       rmSync(libraryDir, { recursive: true, force: true });
@@ -598,7 +663,9 @@ describe("webfetch handler modules", () => {
   });
 
   it("rejects unsafe tar archive entries before extraction", async () => {
-    const libraryDir = (await Bun.$`mktemp -d /tmp/improved-webtools-arxiv-unsafe-XXXXXX`.text()).trim();
+    const libraryDir = (
+      await Bun.$`mktemp -d /tmp/improved-webtools-arxiv-unsafe-XXXXXX`.text()
+    ).trim();
     const apiXml = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
   <entry>
@@ -647,12 +714,13 @@ describe("webfetch handler modules", () => {
           now: new Date("2026-03-09T00:00:00Z"),
         });
       } catch (error) {
-        if (error instanceof Error) {rejectionMessage = error.message;}
+        if (error instanceof Error) {
+          rejectionMessage = error.message;
+        }
       }
       expect(rejectionMessage).toContain("unsafe arXiv source archive entry");
     } finally {
       rmSync(libraryDir, { recursive: true, force: true });
     }
   });
-
 });

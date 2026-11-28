@@ -1,7 +1,12 @@
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { hostMatchesDomain, type CommandExecutionResult, type RunCommand, type WebFetchHandlerResult } from "../types.ts";
+import {
+  type CommandExecutionResult,
+  hostMatchesDomain,
+  type RunCommand,
+  type WebFetchHandlerResult,
+} from "../types.ts";
 
 export const ARXIV_DOMAINS = ["arxiv.org", "www.arxiv.org"] as const;
 
@@ -170,9 +175,11 @@ function parseStoredArxivRecord(arxivId: string, contents: string | undefined): 
       updatedDate: parseYamlJsonString("updated_date", contents),
       doi: parseYamlJsonString("doi", contents),
       journalRef: parseYamlJsonString("journal_ref", contents),
-      abstractUrl: parseYamlJsonString("abstract_url", contents) || `https://arxiv.org/abs/${arxivId}`,
+      abstractUrl:
+        parseYamlJsonString("abstract_url", contents) || `https://arxiv.org/abs/${arxivId}`,
       pdfUrl: parseYamlJsonString("pdf_url", contents) || `https://arxiv.org/pdf/${arxivId}.pdf`,
-      sourceUrl: parseYamlJsonString("source_url", contents) || `https://arxiv.org/e-print/${arxivId}`,
+      sourceUrl:
+        parseYamlJsonString("source_url", contents) || `https://arxiv.org/e-print/${arxivId}`,
     },
     markdownPath: parseYamlJsonString("markdown_path", contents) || undefined,
     htmlPath: parseYamlJsonString("html_path", contents) || undefined,
@@ -236,7 +243,10 @@ async function findMainTexFile(sourceDir: string): Promise<string | undefined> {
   return texFiles[0];
 }
 
-async function runLocalCommand(args: string[], timeoutMs = 60_000): Promise<CommandExecutionResult> {
+async function runLocalCommand(
+  args: string[],
+  timeoutMs = 60_000,
+): Promise<CommandExecutionResult> {
   const proc = Bun.spawn(args, {
     stdout: "pipe",
     stderr: "pipe",
@@ -373,11 +383,25 @@ async function maybeExtractSourceArchive(
   throw new Error(`failed to extract arXiv source archive: ${extract.stderrText.trim()}`);
 }
 
-async function maybeConvertTex(mainTexPath: string, outputPath: string, to: "markdown" | "html", runCommand: RunCommand): Promise<boolean> {
+async function maybeConvertTex(
+  mainTexPath: string,
+  outputPath: string,
+  to: "markdown" | "html",
+  runCommand: RunCommand,
+): Promise<boolean> {
   const args =
     to === "markdown"
       ? ["pandoc", mainTexPath, "--from=latex", "--to=gfm", "--output", outputPath, "--wrap=none"]
-      : ["pandoc", mainTexPath, "--from=latex", "--to=html5", "--output", outputPath, "--standalone", "--mathjax"];
+      : [
+          "pandoc",
+          mainTexPath,
+          "--from=latex",
+          "--to=html5",
+          "--output",
+          outputPath,
+          "--standalone",
+          "--mathjax",
+        ];
   const result = await runCommand(args);
   return result.exitCode === 0 && (await fileExists(outputPath));
 }
@@ -385,7 +409,11 @@ async function maybeConvertTex(mainTexPath: string, outputPath: string, to: "mar
 function buildBibtex(metadata: ArxivMetadata): string {
   const firstAuthor = metadata.authors[0]?.split(/\s+/).at(-1) ?? "arxiv";
   const year = metadata.publishedDate.slice(0, 4) || "n.d.";
-  const citeKey = `${firstAuthor}${year}${metadata.arxivId.replaceAll("/", "").replaceAll(".", "")}`.replaceAll(/[^A-Za-z0-9]/g, "");
+  const citeKey =
+    `${firstAuthor}${year}${metadata.arxivId.replaceAll("/", "").replaceAll(".", "")}`.replaceAll(
+      /[^A-Za-z0-9]/g,
+      "",
+    );
   const lines = [
     `@article{${citeKey},`,
     `  title = {${metadata.title}},`,
@@ -546,7 +574,12 @@ async function ensureArxivArtifacts(input: {
   const sourceBytes = await fetchBytesOrThrow(fetchImpl, metadata.sourceUrl);
   await writeFile(artifacts.sourceArchivePath, sourceBytes);
   processingNotes.push("Source archive downloaded from arXiv");
-  const extractionMode = await maybeExtractSourceArchive(artifacts, sourceBytes, runCommand, arxivId);
+  const extractionMode = await maybeExtractSourceArchive(
+    artifacts,
+    sourceBytes,
+    runCommand,
+    arxivId,
+  );
   processingNotes.push(
     extractionMode === "validated-tar"
       ? "Source archive extracted with validated tar paths"
